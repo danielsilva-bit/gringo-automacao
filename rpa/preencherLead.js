@@ -59,12 +59,15 @@ function formatarTelefoneParaSite(telefone) {
 }
 
 async function preencherFormulario(page, lead) {
-  // Seletores conforme inspecionados na página de anúncio do usadosbr.com.
+  // Seletores conforme inspecionados de verdade no HTML do usadosbr.com
+  // (o campo de nome usa "nome", em português — não "name" como se supunha
+  // antes só pela imagem da tela; foi essa troca que causava Erro_RPA em
+  // 100% das execuções, sem nunca chegar a clicar em enviar).
   // Se o site mudar o HTML, ajuste aqui.
   await page.goto(lead.link, { waitUntil: "domcontentloaded", timeout: 30000 });
 
-  await page.waitForSelector("#whatsapp-name", { timeout: 15000 });
-  await page.fill("#whatsapp-name", lead.nome || "");
+  await page.waitForSelector("#whatsapp-nome", { timeout: 15000 });
+  await page.fill("#whatsapp-nome", lead.nome || "");
   await page.fill("#whatsapp-email", lead.email || "");
   await page.fill("#whatsapp-telefone", formatarTelefoneParaSite(lead.telefone));
 
