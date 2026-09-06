@@ -38,6 +38,17 @@ async function marcarStatus(acao, protocolo) {
   await fetch(url, { method: "POST" });
 }
 
+// O campo do site espera DDD+número (ex.: 11948308713, 11 dígitos), sem o
+// código do país. Os leads chegam do WhatsApp com "55" na frente
+// (ex.: 5511948308713) — tira esse prefixo antes de preencher.
+function formatarTelefoneParaSite(telefone) {
+  let numeros = String(telefone || "").replace(/\D/g, "");
+  if (numeros.length >= 12 && numeros.startsWith("55")) {
+    numeros = numeros.slice(2);
+  }
+  return numeros;
+}
+
 async function preencherFormulario(page, lead) {
   // Seletores conforme inspecionados na página de anúncio do usadosbr.com.
   // Se o site mudar o HTML, ajuste aqui.
@@ -46,7 +57,7 @@ async function preencherFormulario(page, lead) {
   await page.waitForSelector("#whatsapp-name", { timeout: 15000 });
   await page.fill("#whatsapp-name", lead.nome || "");
   await page.fill("#whatsapp-email", lead.email || "");
-  await page.fill("#whatsapp-telefone", (lead.telefone || "").replace(/\D/g, ""));
+  await page.fill("#whatsapp-telefone", formatarTelefoneParaSite(lead.telefone));
 
   if (DRY_RUN) {
     console.log(`[DRY_RUN] Formulário preenchido para protocolo ${lead.protocolo}, não enviei.`);
