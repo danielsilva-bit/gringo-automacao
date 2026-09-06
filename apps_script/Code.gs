@@ -397,3 +397,30 @@ function marcarStatus(protocolo, status) {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// UTILITÁRIO DE TESTE — rodar manualmente quando quiser reprocessar uma linha
+// da aba Entrada do zero (limpa Status/Protocolo/Data_Envio_RPA e corrige o
+// e-mail, depois chama processarPendentes de novo). Existe só pra não
+// depender de editar célula por célula na mão, o que já causou linha
+// desalinhada/e-mail trocado por telefone em testes anteriores.
+// Ajuste NUMERO_LINHA e EMAIL_CORRETO antes de rodar, se precisar.
+// ---------------------------------------------------------------------------
+function repararLinhaTeste() {
+  const NUMERO_LINHA = 3; // linha 3 da aba Entrada (a que tem o protocolo 48308713TESTE00120260906)
+  const EMAIL_CORRETO = "daniel.silva@usadosbr.com";
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const entrada = ss.getSheetByName(ABA_ENTRADA);
+  entrada.getRange(NUMERO_LINHA, COL.EMAIL).setValue(EMAIL_CORRETO);
+  entrada.getRange(NUMERO_LINHA, COL.STATUS).clearContent();
+  entrada.getRange(NUMERO_LINHA, COL.PROTOCOLO).clearContent();
+  entrada.getRange(NUMERO_LINHA, COL.DATA_ENVIO_RPA).clearContent();
+
+  processarPendentes();
+
+  SpreadsheetApp.getUi().alert(
+    "Linha " + NUMERO_LINHA + " corrigida (e-mail = " + EMAIL_CORRETO + ") e reprocessada.\n" +
+    "Confira o novo Status na coluna N."
+  );
+}
