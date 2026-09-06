@@ -1,0 +1,38 @@
+name: Gringo RPA - preencher leads
+
+on:
+  schedule:
+    # a cada 15 minutos. Ajuste a cadência depois de validar o dry-run.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Rodar em modo simulação (não envia o formulário)"
+        required: false
+        default: "true"
+
+jobs:
+  rodar-rpa:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rpa
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Instalar dependências
+        run: npm install
+
+      - name: Instalar navegador do Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Rodar robô
+        env:
+          SHEET_WEBAPP_URL: ${{ secrets.SHEET_WEBAPP_URL }}
+          SHEET_TOKEN: ${{ secrets.SHEET_TOKEN }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: node preencherLead.js

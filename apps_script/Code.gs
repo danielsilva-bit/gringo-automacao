@@ -99,10 +99,19 @@ function configurarPlanilhaV1() {
     token = Utilities.getUuid();
     props.setProperty("TOKEN", token);
   }
+  // Token separado, só de leitura de estatísticas agregadas (sem PII), pra usar
+  // no dashboard público do GitHub Pages sem expor dado de cliente nem dar
+  // acesso às ações do robô de RPA.
+  let dashToken = props.getProperty("DASH_TOKEN");
+  if (!dashToken) {
+    dashToken = Utilities.getUuid();
+    props.setProperty("DASH_TOKEN", dashToken);
+  }
   config.clear();
-  config.getRange(1, 1, 3, 2).setValues([
+  config.getRange(1, 1, 4, 2).setValues([
     ["Chave", "Valor"],
     ["TOKEN", token],
+    ["DASH_TOKEN", dashToken],
     ["Atualizado em", new Date()],
   ]);
 
@@ -251,13 +260,32 @@ function checarToken(e) {
   return e.parameter.token && e.parameter.token === token;
 }
 
+function checarTokenDashboard(e) {
+  const props = PropertiesService.getScriptProperties();
+  const token = props.getProperty("DASH_TOKEN");
+  return e.parameter.token && e.parameter.token === token;
+}
+
 function doGet(e) {
+  const acao = e.parameter.action;
+
+  // getStats usa um token separado (DASH_TOKEN), de baixo privilégio: só
+  // números agregados, nenhum dado de cliente. É o único endpoint seguro pra
+  // chamar de dentro do dashboard público (o código-fonte da página é público).
+  if (acao === "getStats") {
+    if (!checarTokenDashboard(e)) {
+      return ContentService.createTextOutput(JSON.stringify({ erro: "token inválido" }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    return ContentService.createTextOutput(JSON.stringify(getStats()))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
   if (!checarToken(e)) {
     return ContentService.createTextOutput(JSON.stringify({ erro: "token inválido" }))
       .setMimeType(ContentService.MimeType.JSON);
   }
 
-  const acao = e.parameter.action;
   if (acao === "getPendentes") {
     return ContentService.createTextOutput(JSON.stringify(getPendentes()))
       .setMimeType(ContentService.MimeType.JSON);
@@ -265,6 +293,47 @@ function doGet(e) {
 
   return ContentService.createTextOutput(JSON.stringify({ erro: "ação desconhecida" }))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// Estatísticas agregadas pro dashboard público — nunca inclui nome, e-mail,
+// telefone ou qualquer outro dado individual do cliente.
+function getStats() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const entrada = ss.getSheetByName(ABA_ENTRADA);
+  const lastRow = entrada.getLastRow();
+  if (lastRow < 2) {
+    return { total: 0, comCodigo: 0, porStatus: {}, porDia: {} };
+  }
+
+  const dados = entrada.getRange(2, 1, lastRow - 1, CABECALHO_ENTRADA.length).getValues();
+  const porStatus = {};
+  const porDia = {};
+  let comCodigo = 0;
+
+  dados.forEach(function (linha) {
+    const codigo = linha[COL.CODIGO_ANUNCIO - 1];
+    if (codigo) comCodigo++;
+
+    const status = linha[COL.STATUS - 1] || "Sem status";
+    porStatus[status] = (porStatus[status] || 0) + 1;
+
+    const data = linha[COL.DATA - 1];
+    let diaChave = "";
+    if (data instanceof Date) {
+      diaChave = Utilities.formatDate(data, Session.getScriptTimeZone(), "yyyy-MM-dd");
+    } else if (data) {
+      diaChave = String(data).slice(0, 10);
+    }
+    if (diaChave) porDia[diaChave] = (porDia[diaChave] || 0) + 1;
+  });
+
+  return {
+    total: dados.length,
+    comCodigo: comCodigo,
+    porStatus: porStatus,
+    porDia: porDia,
+    atualizadoEm: new Date().toISOString(),
+  };
 }
 
 function doPost(e) {

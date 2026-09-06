@@ -47,9 +47,15 @@ do fluxo (o Agente de IA, os filtros, etc. continuam como estão).
    - `SHEET_TOKEN` — o token da aba Config (passo 1.7 acima)
 3. Em Settings > Pages, ative o GitHub Pages apontando pra pasta `/docs` na branch
    principal. Isso publica o dashboard.
-4. Na planilha, publique a aba Entrada na web: Arquivo > Compartilhar > Publicar na
-   web > selecione a aba **Entrada** > formato **CSV**. Copie a URL gerada e cole em
-   `docs/index.html`, na constante `CSV_URL`. Suba essa alteração (`git push`).
+4. O dashboard **não lê a planilha publicada como CSV** — isso exporia nome/e-mail/
+   telefone dos clientes pra qualquer um com o link, pra sempre, mesmo escondendo a
+   aba depois. Em vez disso, ele chama um endpoint novo do próprio Web App
+   (`action=getStats`) que devolve só números agregados, usando um token separado
+   (`DASH_TOKEN`, de baixo privilégio — só lê estatística, não dá acesso a dado de
+   cliente nem às ações do robô). Depois de colar a versão atualizada do
+   `apps_script/Code.gs` (que já inclui `getStats`) e rodar `configurarPlanilhaV1`
+   de novo, pegue o `DASH_TOKEN` na aba Config e cole em `docs/index.html`, na
+   constante `DASH_TOKEN`. Redeploy do Web App (mesma implantação, "Nova versão").
 
 ### 4. Validar o robô antes de ligar de vez
 
