@@ -41,11 +41,20 @@ async function marcarStatus(acao, protocolo) {
 // O campo do site espera DDD+número (ex.: 11948308713, 11 dígitos), sem o
 // código do país. Os leads chegam do WhatsApp com "55" na frente
 // (ex.: 5511948308713) — tira esse prefixo antes de preencher.
+// Às vezes o SendPulse "come" o 9 do celular e o número chega com só 10
+// dígitos depois do DDI (ex.: 551148308713 -> "1148308713"). Como praticamente
+// todo número aqui é celular, reinserimos o 9 logo depois do DDD nesse caso.
 function formatarTelefoneParaSite(telefone) {
   let numeros = String(telefone || "").replace(/\D/g, "");
+
   if (numeros.length >= 12 && numeros.startsWith("55")) {
     numeros = numeros.slice(2);
   }
+
+  if (numeros.length === 10) {
+    numeros = numeros.slice(0, 2) + "9" + numeros.slice(2);
+  }
+
   return numeros;
 }
 
