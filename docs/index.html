@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gringo — Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #f7f8fa; --card: #ffffff; --text: #1a1d29; --muted: #6b7280;
+    --accent: #16a34a; --border: #e5e7eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --card:#171a21; --text:#e7e9ee; --muted:#9aa1ac; --border:#2a2e37; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; padding:24px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:20px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; margin-bottom:22px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; }
+  .stat { font-size:26px; font-weight:700; }
+  .label { color:var(--muted); font-size:12.5px; margin-top:2px; }
+  .charts { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:800px){ .charts{grid-template-columns:1fr;} }
+  .chart-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; }
+  .chart-card h3 { margin:0 0 12px; font-size:14px; color:var(--muted); font-weight:600; }
+  .err { color:#b91c1c; font-size:13px; }
+  canvas { max-height:260px; }
+</style>
+</head>
+<body>
+  <h1>Gringo — Volumetria &amp; Leads</h1>
+  <div class="sub" id="atualizado">Carregando...</div>
+
+  <div class="grid" id="stats"></div>
+
+  <div class="charts">
+    <div class="chart-card"><h3>Leads por dia</h3><canvas id="chartDia"></canvas></div>
+    <div class="chart-card"><h3>Status do processamento</h3><canvas id="chartStatus"></canvas></div>
+    <div class="chart-card"><h3>Dentro x fora do horário</h3><canvas id="chartHorario"></canvas></div>
+    <div class="chart-card"><h3>Com código x sem código</h3><canvas id="chartCodigo"></canvas></div>
+  </div>
+
+<script>
+// Troque pela URL publicada da aba "Entrada" (File > Compartilhar > Publicar na
+// web > aba Entrada > formato CSV) da planilha Gringo_Automação.
+const CSV_URL = "COLE_AQUI_A_URL_CSV_PUBLICADA";
+
+function parseCSV(text) {
+  const linhas = text.trim().split(/\r?\n/).map(l => l.split(","));
+  const header = linhas[0].map(h => h.replace(/^"|"$/g, "").trim());
+  return linhas.slice(1).map(cols => {
+    const obj = {};
+    header.forEach((h, i) => { obj[h] = (cols[i] || "").replace(/^"|"$/g, "").trim(); });
+    return obj;
+  });
+}
+
+function cor(i) {
+  const p = ["#16a34a","#2563eb","#f59e0b","#dc2626","#7c3aed","#0891b2"];
+  return p[i % p.length];
+}
+
+async function carregar() {
+  try {
+    const resp = await fetch(CSV_URL, { cache: "no-store" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const rows = parseCSV(await resp.text());
+
+    document.getElementById("atualizado").textContent =
+      "Atualizado em " + new Date().toLocaleString("pt-BR") + " · " + rows.length + " leads na aba Entrada";
+
+    const total = rows.length;
+    const comCodigo = rows.filter(r => r.Codigo_Anuncio).length;
+    const enviados = rows.filter(r => r.Status === "Enviado").length;
+    const pendentes = rows.filter(r => r.Status === "Pendente_RPA").length;
+
+    document.getElementById("stats").innerHTML = `
+      <div class="card"><div class="stat">${total}</div><div class="label">Leads totais</div></div>
+      <div class="card"><div class="stat">${comCodigo}</div><div class="label">Com código de anúncio</div></div>
+      <div class="card"><div class="stat">${enviados}</div><div class="label">Enviados via RPA</div></div>
+      <div class="card"><div class="stat">${pendentes}</div><div class="label">Pendentes de envio</div></div>
+    `;
+
+    // Leads por dia (usa a coluna Data, formato dd.mm.yyyy ou dd/mm/yyyy)
+    const porDia = {};
+    rows.forEach(r => { const d = (r.Data || "").slice(0,10); if (d) porDia[d] = (porDia[d]||0)+1; });
+    const diasOrdenados = Object.keys(porDia).sort();
+    new Chart(document.getElementById("chartDia"), {
+      type: "line",
+      data: { labels: diasOrdenados, datasets: [{ label: "Leads", data: diasOrdenados.map(d=>porDia[d]), borderColor: cor(0), tension:.3 }] },
+      options: { plugins:{legend:{display:false}}, scales:{ y:{beginAtZero:true} } }
+    });
+
+    // Status
+    const statusCount = {};
+    rows.forEach(r => { const s = r.Status || "Sem status"; statusCount[s] = (statusCount[s]||0)+1; });
+    new Chart(document.getElementById("chartStatus"), {
+      type: "doughnut",
+      data: { labels: Object.keys(statusCount), datasets: [{ data: Object.values(statusCount), backgroundColor: Object.keys(statusCount).map((_,i)=>cor(i)) }] }
+    });
+
+    // Horário
+    const horarioCount = { "Dentro do horário": 0, "Fora do horário": 0 };
+    rows.forEach(r => { if (horarioCount[r.Jornada] !== undefined) horarioCount[r.Jornada]++; });
+    new Chart(document.getElementById("chartHorario"), {
+      type: "bar",
+      data: { labels: Object.keys(horarioCount), datasets: [{ data: Object.values(horarioCount), backgroundColor: [cor(0), cor(2)] }] },
+      options: { plugins:{legend:{display:false}} }
+    });
+
+    // Com/sem código
+    new Chart(document.getElementById("chartCodigo"), {
+      type: "pie",
+      data: { labels: ["Com código", "Sem código"], datasets: [{ data: [comCodigo, total-comCodigo], backgroundColor:[cor(0), cor(3)] }] }
+    });
+
+  } catch (e) {
+    document.getElementById("atualizado").innerHTML = `<span class="err">Não consegui carregar os dados: ${e.message}. Confirme se a URL do CSV publicado está correta em CSV_URL.</span>`;
+  }
+}
+
+carregar();
+</script>
+</body>
+</html>

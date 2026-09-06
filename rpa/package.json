@@ -1,0 +1,12 @@
+{
+  "name": "gringo-rpa",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Preenche automaticamente o formulário de contato do anúncio no usadosbr.com para leads que vieram do Gringo com código de anúncio identificado.",
+  "scripts": {
+    "start": "node preencherLead.js"
+  },
+  "dependencies": {
+    "playwright": "^1.47.0"
+  }
+}

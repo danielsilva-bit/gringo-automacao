@@ -1,0 +1,330 @@
+/**
+ * GRINGO V1 — script único da planilha "Gringo_Automação"
+ * Substitui os 4 scripts antigos (puxarClientesComCodigo2, processarLinha x3, onEdit/onChange soltos).
+ *
+ * O que ele faz:
+ *  1. Cria a estrutura da planilha (aba Entrada + aba Config) na primeira execução.
+ *  2. A cada linha nova em "Entrada" (inserida pelo SendPulse), extrai Nome/E-mail/CPF/Código
+ *     do texto bruto da mensagem.
+ *  3. Se veio "código: NNNNNN" na mensagem, procura esse código na aba "Estoque_base_Dados"
+ *     (equivalente a um PROCV) e traz Marca/Modelo/Ano/Link do anúncio.
+ *  4. Marca o status da linha: Pendente_RPA | Codigo_Sem_Match | Sem_Codigo.
+ *  5. Expõe um Web App (doGet/doPost) para o robô de RPA (rodando no GitHub Actions)
+ *     buscar os leads pendentes e, depois de preencher o formulário do anúncio,
+ *     avisar de volta que foi enviado.
+ *
+ * INSTALAÇÃO (uma vez só):
+ *  a) Extensions > Apps Script, na planilha Gringo_Automação. Cole este arquivo substituindo o Code.gs padrão.
+ *  b) Rode a função `configurarPlanilhaV1` uma vez (autorize as permissões pedidas).
+ *     Isso cria a aba "Entrada" e a aba "Config" com um token de segurança gerado automaticamente.
+ *  c) Confirme que a aba "Estoque_base_Dados" tem exatamente estes cabeçalhos na linha 1:
+ *     Codigo_Anuncio | Marca | Modelo | Ano | Link_Anuncio
+ *  d) Rode `instalarGatilho` uma vez (cria o gatilho onChange instalável — necessário porque
+ *     o SendPulse insere linhas via API, e o onEdit simples não dispara nesse caso).
+ *  e) Deploy > Nova implantação > Aplicativo da Web. Executar como "Eu", Quem pode acessar "Qualquer pessoa".
+ *     Copie a URL gerada — ela vai para o GitHub Actions (segredo SHEET_WEBAPP_URL).
+ *  f) Na aba "Config", copie o valor de TOKEN — vai para o GitHub Actions (segredo SHEET_TOKEN).
+ *  g) No SendPulse, aponte o(s) nó(s) "Inserir linha do Google Planilhas" para esta planilha,
+ *     aba "Entrada", preenchendo nas colunas: Nome, Telefone, Data, Data_Hora, Mensagem
+ *     (nessa ordem — é a mesma ordem que o fluxo atual já usa, só troca o destino).
+ */
+
+const ABA_ENTRADA = "Entrada";
+const ABA_ESTOQUE = "Estoque_base_Dados";
+const ABA_CONFIG = "Config";
+
+const COL = {
+  TIMESTAMP: 1,
+  NOME: 2,
+  TELEFONE: 3,
+  DATA: 4,
+  DATA_HORA: 5,
+  MENSAGEM: 6,
+  EMAIL: 7,
+  CPF: 8,
+  CODIGO_ANUNCIO: 9,
+  MARCA: 10,
+  MODELO: 11,
+  ANO: 12,
+  LINK_ANUNCIO: 13,
+  STATUS: 14,
+  PROTOCOLO: 15,
+  DATA_ENVIO_RPA: 16,
+};
+
+const CABECALHO_ENTRADA = [
+  "Timestamp", "Nome", "Telefone", "Data", "Data_Hora", "Mensagem",
+  "Email", "CPF", "Codigo_Anuncio", "Marca", "Modelo", "Ano",
+  "Link_Anuncio", "Status", "Protocolo", "Data_Envio_RPA",
+];
+
+const CABECALHO_ESTOQUE = ["Codigo_Anuncio", "Marca", "Modelo", "Ano", "Link_Anuncio"];
+
+const STATUS_PENDENTE = "Pendente_RPA";
+const STATUS_SEM_MATCH = "Codigo_Sem_Match";
+const STATUS_SEM_CODIGO = "Sem_Codigo";
+const STATUS_ENVIADO = "Enviado";
+const STATUS_ERRO = "Erro_RPA";
+
+// ---------------------------------------------------------------------------
+// SETUP — rodar uma vez manualmente
+// ---------------------------------------------------------------------------
+
+function configurarPlanilhaV1() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  let entrada = ss.getSheetByName(ABA_ENTRADA);
+  if (!entrada) {
+    entrada = ss.insertSheet(ABA_ENTRADA);
+  }
+  if (entrada.getLastRow() === 0) {
+    entrada.getRange(1, 1, 1, CABECALHO_ENTRADA.length).setValues([CABECALHO_ENTRADA]);
+    entrada.setFrozenRows(1);
+  }
+
+  const estoque = ss.getSheetByName(ABA_ESTOQUE);
+  if (!estoque) {
+    const criado = ss.insertSheet(ABA_ESTOQUE);
+    criado.getRange(1, 1, 1, CABECALHO_ESTOQUE.length).setValues([CABECALHO_ESTOQUE]);
+    criado.setFrozenRows(1);
+  }
+
+  let config = ss.getSheetByName(ABA_CONFIG);
+  if (!config) {
+    config = ss.insertSheet(ABA_CONFIG);
+  }
+  const props = PropertiesService.getScriptProperties();
+  let token = props.getProperty("TOKEN");
+  if (!token) {
+    token = Utilities.getUuid();
+    props.setProperty("TOKEN", token);
+  }
+  config.clear();
+  config.getRange(1, 1, 3, 2).setValues([
+    ["Chave", "Valor"],
+    ["TOKEN", token],
+    ["Atualizado em", new Date()],
+  ]);
+
+  SpreadsheetApp.getUi().alert(
+    "Planilha configurada.\n\nAba Entrada e Config prontas.\n" +
+    "Confirme os cabeçalhos da aba Estoque_base_Dados e rode instalarGatilho() em seguida."
+  );
+}
+
+function instalarGatilho() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "aoMudarPlanilha") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("aoMudarPlanilha").forSpreadsheet(ss).onChange().create();
+  SpreadsheetApp.getUi().alert("Gatilho onChange instalado.");
+}
+
+// ---------------------------------------------------------------------------
+// PROCESSAMENTO
+// ---------------------------------------------------------------------------
+
+function aoMudarPlanilha(e) {
+  processarPendentes();
+}
+
+// Roda manualmente ou via gatilho: processa todas as linhas da aba Entrada
+// que ainda não têm Status preenchido.
+function processarPendentes() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const entrada = ss.getSheetByName(ABA_ENTRADA);
+  if (!entrada) return;
+
+  const lastRow = entrada.getLastRow();
+  if (lastRow < 2) return;
+
+  const dados = entrada.getRange(2, 1, lastRow - 1, CABECALHO_ENTRADA.length).getValues();
+  const estoqueMapa = carregarEstoque();
+
+  const protocolosExistentes = {};
+  dados.forEach(function (linha) {
+    const p = linha[COL.PROTOCOLO - 1];
+    if (p) protocolosExistentes[p] = true;
+  });
+
+  dados.forEach(function (linha, idx) {
+    const numeroLinha = idx + 2;
+    const statusAtual = linha[COL.STATUS - 1];
+    if (statusAtual) return; // já processado
+
+    processarLinha(entrada, numeroLinha, linha, estoqueMapa, protocolosExistentes);
+  });
+}
+
+function carregarEstoque() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const estoque = ss.getSheetByName(ABA_ESTOQUE);
+  const mapa = {};
+  if (!estoque) return mapa;
+  const lastRow = estoque.getLastRow();
+  if (lastRow < 2) return mapa;
+  const dados = estoque.getRange(2, 1, lastRow - 1, CABECALHO_ESTOQUE.length).getValues();
+  dados.forEach(function (linha) {
+    const codigo = String(linha[0]).trim();
+    if (!codigo) return;
+    mapa[codigo] = { marca: linha[1], modelo: linha[2], ano: linha[3], link: linha[4] };
+  });
+  return mapa;
+}
+
+function processarLinha(entrada, numeroLinha, linha, estoqueMapa, protocolosExistentes) {
+  const mensagem = String(linha[COL.MENSAGEM - 1] || "");
+  const telefone = String(linha[COL.TELEFONE - 1] || "");
+  let nome = String(linha[COL.NOME - 1] || "");
+  let email = String(linha[COL.EMAIL - 1] || "");
+  let cpf = String(linha[COL.CPF - 1] || "");
+  let codigo = String(linha[COL.CODIGO_ANUNCIO - 1] || "").trim();
+
+  if (mensagem) {
+    if (!nome) {
+      const nomeMatch = mensagem.match(/Sou\s+([^,\.]+)/i);
+      if (nomeMatch) {
+        nome = nomeMatch[1].trim();
+        if (nome.toLowerCase().indexOf(" de ") !== -1) {
+          nome = nome.split(" de ")[0].trim();
+        }
+      }
+    }
+    if (!email) {
+      const emailMatch = mensagem.match(/email:\s*([^\s,]+)/i);
+      if (emailMatch) email = emailMatch[1].trim();
+    }
+    if (!cpf) {
+      const cpfMatch = mensagem.match(/CPF:\s*([0-9]+)/i);
+      if (cpfMatch) cpf = cpfMatch[1].trim();
+    }
+    if (!codigo) {
+      const codigoMatch = mensagem.match(/c[oó]digo:?\s*(\d+)/i);
+      if (codigoMatch) codigo = codigoMatch[1].trim();
+    }
+  }
+
+  let marca = "", modelo = "", ano = "", link = "";
+  let status;
+
+  if (codigo && estoqueMapa[codigo]) {
+    const info = estoqueMapa[codigo];
+    marca = info.marca; modelo = info.modelo; ano = info.ano; link = info.link;
+    status = STATUS_PENDENTE;
+  } else if (codigo) {
+    status = STATUS_SEM_MATCH; // veio com código mas não achamos no estoque
+  } else {
+    status = STATUS_SEM_CODIGO; // sem código na mensagem — vai só pro atendimento IA / dashboard
+  }
+
+  const telLimpo = telefone.replace(/\D/g, "");
+  const tel8 = telLimpo.slice(-8);
+  const hoje = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyyMMdd");
+  const protocolo = tel8 + (codigo || "SC") + hoje;
+
+  if (protocolosExistentes[protocolo]) {
+    status = STATUS_ENVIADO; // já existe um igual processado antes — evita reenviar
+  } else {
+    protocolosExistentes[protocolo] = true;
+  }
+
+  entrada.getRange(numeroLinha, COL.NOME).setValue(nome);
+  entrada.getRange(numeroLinha, COL.EMAIL).setValue(email);
+  entrada.getRange(numeroLinha, COL.CPF).setValue(cpf);
+  entrada.getRange(numeroLinha, COL.CODIGO_ANUNCIO).setValue(codigo);
+  entrada.getRange(numeroLinha, COL.MARCA).setValue(marca);
+  entrada.getRange(numeroLinha, COL.MODELO).setValue(modelo);
+  entrada.getRange(numeroLinha, COL.ANO).setValue(ano);
+  entrada.getRange(numeroLinha, COL.LINK_ANUNCIO).setValue(link);
+  entrada.getRange(numeroLinha, COL.STATUS).setValue(status);
+  entrada.getRange(numeroLinha, COL.PROTOCOLO).setValue(protocolo);
+}
+
+// ---------------------------------------------------------------------------
+// WEB APP — usado pelo robô de RPA (GitHub Actions)
+// ---------------------------------------------------------------------------
+
+function checarToken(e) {
+  const props = PropertiesService.getScriptProperties();
+  const token = props.getProperty("TOKEN");
+  return e.parameter.token && e.parameter.token === token;
+}
+
+function doGet(e) {
+  if (!checarToken(e)) {
+    return ContentService.createTextOutput(JSON.stringify({ erro: "token inválido" }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  const acao = e.parameter.action;
+  if (acao === "getPendentes") {
+    return ContentService.createTextOutput(JSON.stringify(getPendentes()))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  return ContentService.createTextOutput(JSON.stringify({ erro: "ação desconhecida" }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function doPost(e) {
+  if (!checarToken(e)) {
+    return ContentService.createTextOutput(JSON.stringify({ erro: "token inválido" }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  const acao = e.parameter.action;
+  const protocolo = e.parameter.protocolo;
+
+  if (acao === "marcarEnviado") {
+    marcarStatus(protocolo, STATUS_ENVIADO);
+    return ContentService.createTextOutput(JSON.stringify({ ok: true }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  if (acao === "marcarErro") {
+    marcarStatus(protocolo, STATUS_ERRO);
+    return ContentService.createTextOutput(JSON.stringify({ ok: true }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  return ContentService.createTextOutput(JSON.stringify({ erro: "ação desconhecida" }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function getPendentes() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const entrada = ss.getSheetByName(ABA_ENTRADA);
+  const lastRow = entrada.getLastRow();
+  if (lastRow < 2) return [];
+
+  const dados = entrada.getRange(2, 1, lastRow - 1, CABECALHO_ENTRADA.length).getValues();
+  const resultado = [];
+  dados.forEach(function (linha) {
+    if (linha[COL.STATUS - 1] !== STATUS_PENDENTE) return;
+    resultado.push({
+      protocolo: linha[COL.PROTOCOLO - 1],
+      nome: linha[COL.NOME - 1],
+      email: linha[COL.EMAIL - 1],
+      telefone: linha[COL.TELEFONE - 1],
+      link: linha[COL.LINK_ANUNCIO - 1],
+    });
+  });
+  return resultado;
+}
+
+function marcarStatus(protocolo, status) {
+  if (!protocolo) return;
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const entrada = ss.getSheetByName(ABA_ENTRADA);
+  const lastRow = entrada.getLastRow();
+  if (lastRow < 2) return;
+  const protocolos = entrada.getRange(2, COL.PROTOCOLO, lastRow - 1, 1).getValues();
+  for (let i = 0; i < protocolos.length; i++) {
+    if (String(protocolos[i][0]).trim() === String(protocolo).trim()) {
+      const numeroLinha = i + 2;
+      entrada.getRange(numeroLinha, COL.STATUS).setValue(status);
+      entrada.getRange(numeroLinha, COL.DATA_ENVIO_RPA).setValue(new Date());
+      return;
+    }
+  }
+}
