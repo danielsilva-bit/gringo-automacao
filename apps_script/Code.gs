@@ -419,8 +419,16 @@ function repararLinhaTeste() {
 
   processarPendentes();
 
-  SpreadsheetApp.getUi().alert(
-    "Linha " + NUMERO_LINHA + " corrigida (e-mail = " + EMAIL_CORRETO + ") e reprocessada.\n" +
-    "Confira o novo Status na coluna N."
-  );
+  // O alert() so funciona quando a Sheets tem uma UI ativa na hora da chamada
+  // (varia conforme a forma que voce roda a funcao pelo editor). Envolvemos
+  // em try/catch pra nunca aparecer como "erro" no registro -- o que importa
+  // (corrigir e reprocessar a linha) ja rodou nas linhas acima.
+  try {
+    SpreadsheetApp.getUi().alert(
+      "Linha " + NUMERO_LINHA + " corrigida (e-mail = " + EMAIL_CORRETO + ") e reprocessada.\n" +
+      "Confira o novo Status na coluna N."
+    );
+  } catch (err) {
+    Logger.log("Linha " + NUMERO_LINHA + " corrigida e reprocessada (alerta de UI indisponivel neste contexto).");
+  }
 }
