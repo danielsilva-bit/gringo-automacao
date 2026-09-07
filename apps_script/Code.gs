@@ -429,45 +429,27 @@ function doGet(e) {
       .setMimeType(ContentService.MimeType.JSON);
   }
 
-  if (acao === "getConfigRelatorio") {
-    return ContentService.createTextOutput(JSON.stringify(getConfigRelatorio()))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-
   return ContentService.createTextOutput(JSON.stringify({ erro: "ação desconhecida" }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-// Configuração do relatório diário por e-mail: horário configurado, data do
-// último envio (pra evitar mandar duas vezes no mesmo dia) e a lista de
-// e-mails ativos na aba Relatorio_Destinatarios. Usado pelo robô de relatório
-// no GitHub Actions — mesmo TOKEN de privilégio do robô de RPA (não é
-// exposto no dashboard público).
-function getConfigRelatorio() {
-  const horario = String(lerConfigValor("Horario_Relatorio", "08:00")).trim();
-  const ultimoEnvioRaw = lerConfigValor("Ultimo_Envio_Relatorio", "");
-  let ultimoEnvio = "";
-  if (ultimoEnvioRaw instanceof Date) {
-    ultimoEnvio = Utilities.formatDate(ultimoEnvioRaw, Session.getScriptTimeZone(), "yyyy-MM-dd");
-  } else if (ultimoEnvioRaw) {
-    ultimoEnvio = String(ultimoEnvioRaw).slice(0, 10);
-  }
-
+// Lê a aba Relatorio_Destinatarios e devolve só os e-mails com Ativo=TRUE.
+// Usado pelo relatório diário (enviarRelatorioDiario), que roda dentro do
+// próprio Apps Script — não precisa de HTTP nem de token, é tudo no mesmo
+// script.
+function listarDestinatariosAtivos() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const aba = ss.getSheetByName(ABA_RELATORIO);
   const destinatarios = [];
-  if (aba) {
-    const lastRow = aba.getLastRow();
-    if (lastRow >= 2) {
-      aba.getRange(2, 1, lastRow - 1, 2).getValues().forEach(function (linha) {
-        const email = String(linha[0] || "").trim();
-        const ativo = linha[1] === true || String(linha[1]).toLowerCase() === "true";
-        if (email && ativo) destinatarios.push(email);
-      });
-    }
-  }
-
-  return { horario: horario, ultimoEnvio: ultimoEnvio, destinatarios: destinatarios };
+  if (!aba) return destinatarios;
+  const lastRow = aba.getLastRow();
+  if (lastRow < 2) return destinatarios;
+  aba.getRange(2, 1, lastRow - 1, 2).getValues().forEach(function (linha) {
+    const email = String(linha[0] || "").trim();
+    const ativo = linha[1] === true || String(linha[1]).toLowerCase() === "true";
+    if (email && ativo) destinatarios.push(email);
+  });
+  return destinatarios;
 }
 
 // Agrupa o valor do anúncio numa faixa de preço, pra montar o "perfil de valor"
@@ -585,15 +567,6 @@ function doPost(e) {
       .setMimeType(ContentService.MimeType.JSON);
   }
 
-  if (acao === "marcarRelatorioEnviado") {
-    escreverConfigValor(
-      "Ultimo_Envio_Relatorio",
-      Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd")
-    );
-    return ContentService.createTextOutput(JSON.stringify({ ok: true }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-
   return ContentService.createTextOutput(JSON.stringify({ erro: "ação desconhecida" }))
     .setMimeType(ContentService.MimeType.JSON);
 }
@@ -669,4 +642,178 @@ function repararLinhaTeste() {
   } catch (err) {
     Logger.log("Linha " + NUMERO_LINHA + " corrigida e reprocessada (alerta de UI indisponível neste contexto).");
   }
+}
+
+// ---------------------------------------------------------------------------
+// RELATÓRIO DIÁRIO POR E-MAIL — mês atual + dia anterior
+//
+// Roda inteiro dentro do Apps Script, sem precisar de GitHub Actions nem de
+// senha de app: MailApp.sendEmail envia usando a própria conta Google que tem
+// esta planilha (a mesma que autorizou o script), e a conversão de HTML pra
+// PDF usa o conversor nativo do Utilities — nenhuma credencial nova.
+//
+// instalarGatilhoRelatorio() cria um gatilho que roda a cada 15 min, mas
+// enviarRelatorioDiario() só realmente monta e manda o e-mail quando já
+// passou do horário configurado (Config > Horario_Relatorio) e ainda não foi
+// enviado hoje (Config > Ultimo_Envio_Relatorio) — então rodar de 15 em 15
+// min nunca manda relatório duplicado.
+// ---------------------------------------------------------------------------
+
+function instalarGatilhoRelatorio() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "enviarRelatorioDiario") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("enviarRelatorioDiario").timeBased().everyMinutes(15).create();
+  try {
+    SpreadsheetApp.getUi().alert(
+      "Gatilho do relatório diário instalado.\n\n" +
+      "Roda a cada 15 min, mas só envia de fato no horário configurado em " +
+      "Config > Horario_Relatorio (uma vez por dia). Pra mudar o horário, edite " +
+      "só essa célula — não precisa reinstalar o gatilho."
+    );
+  } catch (err) {
+    Logger.log("Gatilho do relatório diário instalado.");
+  }
+}
+
+function minutosDoDia(hhmm) {
+  const partes = String(hhmm || "00:00").split(":").map(Number);
+  return (partes[0] || 0) * 60 + (partes[1] || 0);
+}
+
+function enviarRelatorioDiario() {
+  const destinatarios = listarDestinatariosAtivos();
+  if (destinatarios.length === 0) {
+    Logger.log("Relatório diário: nenhum destinatário ativo em Relatorio_Destinatarios. Nada a fazer.");
+    return;
+  }
+
+  const fuso = Session.getScriptTimeZone();
+  const hoje = Utilities.formatDate(new Date(), fuso, "yyyy-MM-dd");
+  const ultimoEnvio = String(lerConfigValor("Ultimo_Envio_Relatorio", "")).slice(0, 10);
+  if (ultimoEnvio === hoje) {
+    Logger.log("Relatório diário: hoje (" + hoje + ") já foi enviado.");
+    return;
+  }
+
+  const horario = String(lerConfigValor("Horario_Relatorio", "08:00")).trim();
+  const agora = Utilities.formatDate(new Date(), fuso, "HH:mm");
+  if (minutosDoDia(agora) < minutosDoDia(horario)) {
+    Logger.log("Relatório diário: ainda não chegou o horário configurado (" + horario + "); agora são " + agora + ".");
+    return;
+  }
+
+  const stats = getStats();
+  const detalhe = stats.detalhe || [];
+  const ontem = Utilities.formatDate(new Date(Date.now() - 24 * 60 * 60 * 1000), fuso, "yyyy-MM-dd");
+  const mesAtual = hoje.slice(0, 7);
+
+  const doMes = detalhe.filter(function (r) { return String(r.data || "").slice(0, 7) === mesAtual; });
+  const doDia = detalhe.filter(function (r) { return r.data === ontem; });
+
+  const html = montarHtmlRelatorio({
+    dataRelatorio: Utilities.formatDate(new Date(), fuso, "dd/MM/yyyy HH:mm"),
+    mesLabel: mesAtual,
+    diaLabel: ontem,
+    mes: agregarParaRelatorio(doMes),
+    dia: agregarParaRelatorio(doDia),
+  });
+
+  const pdf = Utilities.newBlob(html, "text/html", "relatorio.html")
+    .getAs("application/pdf")
+    .setName("relatorio-gringo-" + hoje + ".pdf");
+
+  MailApp.sendEmail({
+    to: destinatarios.join(","),
+    subject: "Relatório diário Gringo × usadosbr — " + hoje,
+    body: "Segue em anexo o relatório diário (resumo do mês atual e visão do dia anterior). Este e-mail é gerado automaticamente.",
+    attachments: [pdf],
+    name: "Gringo × usadosbr",
+  });
+
+  escreverConfigValor("Ultimo_Envio_Relatorio", hoje);
+  Logger.log("Relatório diário enviado para: " + destinatarios.join(", "));
+}
+
+function agregarParaRelatorio(linhas) {
+  const total = linhas.length;
+  const comCodigo = linhas.filter(function (r) { return r.temCodigo; }).length;
+  let valorTotal = 0;
+  const porLoja = {};
+  const porCidade = {};
+  linhas.forEach(function (r) {
+    valorTotal += Number(r.valorAnuncio) || 0;
+    if (r.nomeRevenda) porLoja[r.nomeRevenda] = (porLoja[r.nomeRevenda] || 0) + 1;
+    if (r.cidade) porCidade[r.cidade] = (porCidade[r.cidade] || 0) + 1;
+  });
+  return {
+    total: total,
+    comCodigo: comCodigo,
+    pctMatch: total ? Math.round((comCodigo / total) * 100) : 0,
+    valorTotal: valorTotal,
+    topLojas: topNObj(porLoja, 5),
+    topCidades: topNObj(porCidade, 5),
+  };
+}
+
+function topNObj(obj, n) {
+  return Object.entries(obj).sort(function (a, b) { return b[1] - a[1]; }).slice(0, n);
+}
+
+function formatarMoedaBr(v) {
+  return (Number(v) || 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 });
+}
+
+function linhasTabelaHtml(pares, rotuloVazio) {
+  if (!pares.length) {
+    return '<tr><td colspan="2" style="padding:5px 8px;color:#7f9db4;">' + rotuloVazio + "</td></tr>";
+  }
+  return pares
+    .map(function (par) {
+      return (
+        '<tr><td style="padding:5px 8px;border-bottom:1px solid #24384a;">' + par[0] +
+        '</td><td style="padding:5px 8px;text-align:right;border-bottom:1px solid #24384a;">' + par[1] +
+        "</td></tr>"
+      );
+    })
+    .join("");
+}
+
+function blocoResumoHtml(titulo, r) {
+  return (
+    '<h2 style="margin:22px 0 8px;font-size:16px;color:#eaf3fb;">' + titulo + "</h2>" +
+    '<table style="border-collapse:collapse;margin-bottom:10px;">' +
+    '<tr><td style="padding:3px 10px 3px 0;color:#7f9db4;font-size:13px;">Total de leads</td>' +
+    '<td style="padding:3px 0;font-weight:bold;font-size:15px;">' + r.total + "</td></tr>" +
+    '<tr><td style="padding:3px 10px 3px 0;color:#7f9db4;font-size:13px;">Com match (código bateu)</td>' +
+    '<td style="padding:3px 0;font-weight:bold;font-size:15px;color:#1f9d51;">' + r.comCodigo + " (" + r.pctMatch + "%)</td></tr>" +
+    '<tr><td style="padding:3px 10px 3px 0;color:#7f9db4;font-size:13px;">Valor total em anúncios</td>' +
+    '<td style="padding:3px 0;font-weight:bold;font-size:15px;color:#b58900;">R$ ' + formatarMoedaBr(r.valorTotal) + "</td></tr>" +
+    "</table>" +
+    '<table style="border-collapse:collapse;width:100%;"><tr>' +
+    '<td style="vertical-align:top;width:50%;"><table style="border-collapse:collapse;min-width:200px;">' +
+    '<tr><th style="text-align:left;padding:3px 8px;color:#7f9db4;font-size:11px;">TOP LOJAS</th><th></th></tr>' +
+    linhasTabelaHtml(r.topLojas, "Sem dados de loja") +
+    "</table></td>" +
+    '<td style="vertical-align:top;width:50%;"><table style="border-collapse:collapse;min-width:200px;">' +
+    '<tr><th style="text-align:left;padding:3px 8px;color:#7f9db4;font-size:11px;">TOP CIDADES</th><th></th></tr>' +
+    linhasTabelaHtml(r.topCidades, "Sem dados de cidade") +
+    "</table></td>" +
+    "</tr></table>"
+  );
+}
+
+function montarHtmlRelatorio(args) {
+  return (
+    "<!doctype html><html><head><meta charset=\"utf-8\"></head>" +
+    '<body style="background:#071726;color:#eaf3fb;font-family:Arial,sans-serif;margin:0;padding:26px;">' +
+    '<div style="background:linear-gradient(90deg,#004e87,#39d97a,#ffd500);height:5px;margin:-26px -26px 20px;"></div>' +
+    '<h1 style="font-size:20px;margin:0 0 2px;">' +
+    '<span style="color:#ffd500;font-weight:bold;">GRINGO</span> × ' +
+    '<span style="color:#39d97a;font-weight:bold;">usadosbr</span> — Relatório diário</h1>' +
+    '<div style="color:#7f9db4;font-size:12px;margin-bottom:4px;">Gerado em ' + args.dataRelatorio + "</div>" +
+    blocoResumoHtml("Resumo do mês atual (" + args.mesLabel + ")", args.mes) +
+    blocoResumoHtml("Visão do dia anterior (" + args.diaLabel + ")", args.dia) +
+    "</body></html>"
+  );
 }

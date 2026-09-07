@@ -109,37 +109,33 @@ resumo do **mês atual** e uma visão só do **dia anterior** — total de leads
 valor total em anúncios e top 5 lojas/cidades em cada um. Vai pra todo e-mail marcado
 como ativo na aba **Relatorio_Destinatarios**.
 
+Tudo roda **dentro do próprio Apps Script** — sem GitHub Actions, sem senha de app do
+Gmail, sem secret novo nenhum. O envio usa `MailApp.sendEmail`, que manda o e-mail
+como a própria conta Google dona da planilha (a mesma que você já autorizou quando
+rodou `configurarPlanilhaV1`), e a conversão pra PDF usa o conversor nativo do
+Apps Script. Como a planilha já é sua, não existe credencial nenhuma pra configurar.
+
 Passo a passo pra ligar:
 
 1. Cole a versão atualizada de `apps_script/Code.gs` (a mesma de sempre) e rode
-   `configurarPlanilhaV1` de novo — agora essa função é segura de rodar quantas vezes
+   `configurarPlanilhaV1` de novo — essa função é segura de rodar quantas vezes
    quiser: ela cria a aba **Relatorio_Destinatarios** (com seu e-mail já numa linha,
    `Ativo = TRUE`) e adiciona duas chaves novas na aba **Config** —
    `Horario_Relatorio` (padrão `08:00`) e `Ultimo_Envio_Relatorio` — sem apagar nada
    que já existia.
-2. Pra mudar o horário do envio, edite direto a célula da chave `Horario_Relatorio` na
-   aba Config (formato `HH:MM`, horário de Brasília). Não precisa mexer em código nem
-   no GitHub.
-3. Pra adicionar ou remover quem recebe, edite a aba **Relatorio_Destinatarios**: uma
+2. Pra adicionar ou remover quem recebe, edite a aba **Relatorio_Destinatarios**: uma
    linha por e-mail, coluna `Ativo` em `TRUE`/`FALSE`. Pra pausar o envio de alguém sem
    perder o histórico, marque `FALSE` em vez de apagar a linha.
-4. Gere uma **senha de app** do Gmail pro e-mail que vai enviar
-   (daniel.silva@usadosbr.com, já que é Gmail corporativo): Conta do Google →
-   Segurança → Verificação em duas etapas (ative se ainda não estiver) → Senhas de
-   app → gerar uma pro "Mail". Copie a senha de 16 caracteres gerada.
-5. No repositório do GitHub, em Settings → Secrets and variables → Actions, crie mais
-   três secrets (além dos dois que já existiam):
-   - `DASH_TOKEN` — o mesmo valor que está na aba Config
-   - `GMAIL_USER` — o e-mail que envia (ex.: daniel.silva@usadosbr.com)
-   - `GMAIL_APP_PASSWORD` — a senha de app gerada no passo 4 (não é a senha normal
-     da conta)
-6. Pronto — o workflow `Gringo Relatorio Diario` já está no repositório, rodando de
-   15 em 15 minutos. Ele só realmente gera e manda o e-mail quando bate o horário
-   configurado e ainda não foi enviado hoje (então rodar de 15 em 15 min não manda
-   e-mail duplicado). Pra testar sem esperar o horário, edite `Horario_Relatorio` pra
-   um horário bem próximo do agora, ou rode o workflow manualmente em Actions →
-   "Gringo Relatorio Diario" → Run workflow (mesmo assim ele só envia se já tiver
-   passado do horário configurado).
+3. Pra mudar o horário do envio, edite direto a célula da chave `Horario_Relatorio` na
+   aba Config (formato `HH:MM`, horário de Brasília). Não precisa mexer em código nem
+   no GitHub.
+4. Rode a função `instalarGatilhoRelatorio` uma vez. Isso cria o gatilho que roda de
+   15 em 15 minutos, mas ele só realmente monta e manda o e-mail quando já passou do
+   horário configurado e ainda não foi enviado hoje — então rodar de 15 em 15 min nunca
+   manda e-mail duplicado. Pra testar sem esperar o horário, edite `Horario_Relatorio`
+   pra um horário bem próximo do agora, ou rode a função `enviarRelatorioDiario`
+   manualmente no editor do Apps Script (mesmo assim ela só envia se já tiver passado
+   do horário configurado e ainda não tiver enviado hoje).
 
 O conteúdo do relatório vem do mesmo array `detalhe` sem PII que já alimenta o
 dashboard — nenhum dado de cliente (nome/e-mail/telefone/CPF) entra nesse e-mail.
