@@ -56,8 +56,29 @@ do fluxo (o Agente de IA, os filtros, etc. continuam como estão).
    `apps_script/Code.gs` (que já inclui `getStats`) e rodar `configurarPlanilhaV1`
    de novo, pegue o `DASH_TOKEN` na aba Config e cole em `docs/index.html`, na
    constante `DASH_TOKEN`. Redeploy do Web App (mesma implantação, "Nova versão").
+5. O dashboard tem filtros (loja, cidade, faixa de valor) e um botão "Baixar CSV" que
+   exporta as linhas filtradas — tudo calculado no navegador de quem abre a página, a
+   partir do array `detalhe` que o `getStats` devolve (marca, modelo, loja, cidade,
+   valor, status, dia — nunca nome/e-mail/telefone/protocolo do cliente). Pra baixar o
+   CSV com os dados do cliente (nome/e-mail/telefone), use o próprio Google Sheets:
+   Arquivo > Fazer download > Valores separados por vírgula, na aba Entrada.
 
-### 4. Validar o robô antes de ligar de vez
+### 4. Base de estoque mais rica (loja, cidade, valor, tipo/versão)
+
+A aba `Estoque_base_Dados` cresceu: além de `Codigo_Anuncio | Marca | Modelo | Ano |
+Link_Anuncio` (intocados), agora tem, sempre acrescentadas à direita:
+`Tipo_Base | Versao | Type | Id_Admix | Nome_Revenda | Rev_DDD | Valor_Anuncio | Cidade`.
+Esses campos alimentam o dashboard (separar por loja, por faixa de valor, por cidade).
+Preencha essas colunas pra cada anúncio do seu estoque real — o `Codigo_Anuncio`
+continua sendo a chave usada pra bater com o "código:" que vem na mensagem do cliente.
+
+Se a aba já existia (com só 5 colunas), rode a função `atualizarCabecalhoEstoque` uma
+vez no Apps Script — ela só reescreve a linha 1 (cabeçalho), sem tocar nas linhas de
+dado que já estavam lá. Idem pra aba `Entrada`, com `atualizarCabecalhoEntrada` (ela
+também cresceu, com os mesmos campos, pra cada lead carregar consigo o anúncio/loja
+que bateu no PROCV).
+
+### 5. Validar o robô antes de ligar de vez
 
 O formulário de contato do anúncio eu só consegui inspecionar visualmente pelas suas
 telas (campos `#whatsapp-name`, `#whatsapp-email`, `#whatsapp-telefone` e um botão
