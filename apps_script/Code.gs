@@ -7,18 +7,20 @@
  *  2. A cada linha nova em "Entrada" (inserida pelo SendPulse), extrai Nome/E-mail/CPF/Código
  *     do texto bruto da mensagem.
  *  3. Se veio "código: NNNNNN" na mensagem, procura esse código na aba "Estoque_base_Dados"
- *     (equivalente a um PROCV) e traz Marca/Modelo/Ano/Link do anúncio.
+ *     (equivalente a um PROCV) e traz Marca/Modelo/Ano/Link/Loja/Cidade/Valor etc. do anúncio.
  *  4. Marca o status da linha: Pendente_RPA | Codigo_Sem_Match | Sem_Codigo.
  *  5. Expõe um Web App (doGet/doPost) para o robô de RPA (rodando no GitHub Actions)
  *     buscar os leads pendentes e, depois de preencher o formulário do anúncio,
- *     avisar de volta que foi enviado.
+ *     avisar de volta que foi enviado — e também expõe estatísticas agregadas
+ *     (sem PII) pro dashboard público.
  *
  * INSTALAÇÃO (uma vez só):
  *  a) Extensions > Apps Script, na planilha Gringo_Automação. Cole este arquivo substituindo o Code.gs padrão.
  *  b) Rode a função `configurarPlanilhaV1` uma vez (autorize as permissões pedidas).
  *     Isso cria a aba "Entrada" e a aba "Config" com um token de segurança gerado automaticamente.
- *  c) Confirme que a aba "Estoque_base_Dados" tem exatamente estes cabeçalhos na linha 1:
- *     Codigo_Anuncio | Marca | Modelo | Ano | Link_Anuncio
+ *  c) Se a aba "Estoque_base_Dados" ou "Entrada" já existiam de antes (cabeçalho antigo, com
+ *     menos colunas), rode `atualizarCabecalhoEstoque` e `atualizarCabecalhoEntrada` uma vez —
+ *     elas só reescrevem a linha 1 (cabeçalho), nunca tocam nas linhas de dados já existentes.
  *  d) Rode `instalarGatilho` uma vez (cria o gatilho onChange instalável — necessário porque
  *     o SendPulse insere linhas via API, e o onEdit simples não dispara nesse caso).
  *  e) Deploy > Nova implantação > Aplicativo da Web. Executar como "Eu", Quem pode acessar "Qualquer pessoa".
@@ -33,6 +35,9 @@ const ABA_ENTRADA = "Entrada";
 const ABA_ESTOQUE = "Estoque_base_Dados";
 const ABA_CONFIG = "Config";
 
+// As colunas novas (17-24) foram sempre ACRESCENTADAS no final, nunca inseridas
+// no meio — isso preserva as posições de Status/Protocolo/Data_Envio_RPA que já
+// existiam antes, então nenhum dado antigo precisa ser movido de coluna.
 const COL = {
   TIMESTAMP: 1,
   NOME: 2,
@@ -50,15 +55,32 @@ const COL = {
   STATUS: 14,
   PROTOCOLO: 15,
   DATA_ENVIO_RPA: 16,
+  TIPO_BASE: 17,
+  VERSAO: 18,
+  TYPE: 19,
+  ID_ADMIX: 20,
+  NOME_REVENDA: 21,
+  REV_DDD: 22,
+  VALOR_ANUNCIO: 23,
+  CIDADE: 24,
 };
 
 const CABECALHO_ENTRADA = [
   "Timestamp", "Nome", "Telefone", "Data", "Data_Hora", "Mensagem",
   "Email", "CPF", "Codigo_Anuncio", "Marca", "Modelo", "Ano",
   "Link_Anuncio", "Status", "Protocolo", "Data_Envio_RPA",
+  "Tipo_Base", "Versao", "Type", "Id_Admix", "Nome_Revenda", "Rev_DDD",
+  "Valor_Anuncio", "Cidade",
 ];
 
-const CABECALHO_ESTOQUE = ["Codigo_Anuncio", "Marca", "Modelo", "Ano", "Link_Anuncio"];
+// Mesma lógica: Codigo_Anuncio, Marca, Modelo, Ano e Link_Anuncio já existiam
+// e ficam intactos; os campos novos pedidos pro relatório (loja, cidade, valor,
+// etc.) foram só acrescentados à direita.
+const CABECALHO_ESTOQUE = [
+  "Codigo_Anuncio", "Marca", "Modelo", "Ano", "Link_Anuncio",
+  "Tipo_Base", "Versao", "Type", "Id_Admix", "Nome_Revenda", "Rev_DDD",
+  "Valor_Anuncio", "Cidade",
+];
 
 const STATUS_PENDENTE = "Pendente_RPA";
 const STATUS_SEM_MATCH = "Codigo_Sem_Match";
@@ -121,6 +143,31 @@ function configurarPlanilhaV1() {
   );
 }
 
+// Reescreve SÓ a linha 1 (cabeçalho) da aba Entrada com as colunas atuais —
+// não toca em nenhuma linha de dado já existente. Rode uma vez depois de subir
+// esta versão do Code.gs, se a aba Entrada já existia com o cabeçalho antigo
+// (16 colunas, sem os campos de loja/cidade/valor etc.).
+function atualizarCabecalhoEntrada() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const entrada = ss.getSheetByName(ABA_ENTRADA);
+  entrada.getRange(1, 1, 1, CABECALHO_ENTRADA.length).setValues([CABECALHO_ENTRADA]);
+  SpreadsheetApp.getUi().alert(
+    "Cabeçalho da aba Entrada atualizado (" + CABECALHO_ENTRADA.length + " colunas). " +
+    "Nenhuma linha de dado foi alterada."
+  );
+}
+
+// Mesma ideia, mas pra aba Estoque_base_Dados.
+function atualizarCabecalhoEstoque() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const estoque = ss.getSheetByName(ABA_ESTOQUE);
+  estoque.getRange(1, 1, 1, CABECALHO_ESTOQUE.length).setValues([CABECALHO_ESTOQUE]);
+  SpreadsheetApp.getUi().alert(
+    "Cabeçalho da aba Estoque_base_Dados atualizado (" + CABECALHO_ESTOQUE.length + " colunas). " +
+    "Nenhuma linha de dado foi alterada."
+  );
+}
+
 function instalarGatilho() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   ScriptApp.getProjectTriggers().forEach(function (t) {
@@ -177,7 +224,20 @@ function carregarEstoque() {
   dados.forEach(function (linha) {
     const codigo = String(linha[0]).trim();
     if (!codigo) return;
-    mapa[codigo] = { marca: linha[1], modelo: linha[2], ano: linha[3], link: linha[4] };
+    mapa[codigo] = {
+      marca: linha[1],
+      modelo: linha[2],
+      ano: linha[3],
+      link: linha[4],
+      tipoBase: linha[5],
+      versao: linha[6],
+      type: linha[7],
+      idAdmix: linha[8],
+      nomeRevenda: linha[9],
+      revDDD: linha[10],
+      valorAnuncio: linha[11],
+      cidade: linha[12],
+    };
   });
   return mapa;
 }
@@ -215,11 +275,15 @@ function processarLinha(entrada, numeroLinha, linha, estoqueMapa, protocolosExis
   }
 
   let marca = "", modelo = "", ano = "", link = "";
+  let tipoBase = "", versao = "", type = "", idAdmix = "";
+  let nomeRevenda = "", revDDD = "", valorAnuncio = "", cidade = "";
   let status;
 
   if (codigo && estoqueMapa[codigo]) {
     const info = estoqueMapa[codigo];
     marca = info.marca; modelo = info.modelo; ano = info.ano; link = info.link;
+    tipoBase = info.tipoBase; versao = info.versao; type = info.type; idAdmix = info.idAdmix;
+    nomeRevenda = info.nomeRevenda; revDDD = info.revDDD; valorAnuncio = info.valorAnuncio; cidade = info.cidade;
     status = STATUS_PENDENTE;
   } else if (codigo) {
     status = STATUS_SEM_MATCH; // veio com código mas não achamos no estoque
@@ -248,10 +312,18 @@ function processarLinha(entrada, numeroLinha, linha, estoqueMapa, protocolosExis
   entrada.getRange(numeroLinha, COL.LINK_ANUNCIO).setValue(link);
   entrada.getRange(numeroLinha, COL.STATUS).setValue(status);
   entrada.getRange(numeroLinha, COL.PROTOCOLO).setValue(protocolo);
+  entrada.getRange(numeroLinha, COL.TIPO_BASE).setValue(tipoBase);
+  entrada.getRange(numeroLinha, COL.VERSAO).setValue(versao);
+  entrada.getRange(numeroLinha, COL.TYPE).setValue(type);
+  entrada.getRange(numeroLinha, COL.ID_ADMIX).setValue(idAdmix);
+  entrada.getRange(numeroLinha, COL.NOME_REVENDA).setValue(nomeRevenda);
+  entrada.getRange(numeroLinha, COL.REV_DDD).setValue(revDDD);
+  entrada.getRange(numeroLinha, COL.VALOR_ANUNCIO).setValue(valorAnuncio);
+  entrada.getRange(numeroLinha, COL.CIDADE).setValue(cidade);
 }
 
 // ---------------------------------------------------------------------------
-// WEB APP — usado pelo robô de RPA (GitHub Actions)
+// WEB APP — usado pelo robô de RPA (GitHub Actions) e pelo dashboard
 // ---------------------------------------------------------------------------
 
 function checarToken(e) {
@@ -270,8 +342,9 @@ function doGet(e) {
   const acao = e.parameter.action;
 
   // getStats usa um token separado (DASH_TOKEN), de baixo privilégio: só
-  // números agregados, nenhum dado de cliente. É o único endpoint seguro pra
-  // chamar de dentro do dashboard público (o código-fonte da página é público).
+  // números agregados e uma lista de leads SEM PII (sem nome/e-mail/telefone/
+  // protocolo). É o único endpoint seguro pra chamar de dentro do dashboard
+  // público (o código-fonte da página é público).
   if (acao === "getStats") {
     if (!checarTokenDashboard(e)) {
       return ContentService.createTextOutput(JSON.stringify({ erro: "token inválido" }))
@@ -295,19 +368,43 @@ function doGet(e) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+// Agrupa o valor do anúncio numa faixa de preço, pra montar o "perfil de valor"
+// pedido no dashboard sem precisar expor o valor exato lead a lead (embora o
+// valor exato também vá no array `detalhe`, que já não tem nenhum dado pessoal
+// do cliente — só do anúncio/loja).
+function faixaDeValor(valor) {
+  const v = Number(valor) || 0;
+  if (!v) return "Sem valor";
+  if (v < 30000) return "Até 30 mil";
+  if (v < 60000) return "30 a 60 mil";
+  if (v < 100000) return "60 a 100 mil";
+  if (v < 150000) return "100 a 150 mil";
+  return "Acima de 150 mil";
+}
+
 // Estatísticas agregadas pro dashboard público — nunca inclui nome, e-mail,
-// telefone ou qualquer outro dado individual do cliente.
+// telefone, CPF ou protocolo. O array `detalhe` traz um registro por lead só
+// com dados do ANÚNCIO/LOJA (marca, modelo, loja, cidade, valor, status, dia),
+// pra alimentar os filtros e a exportação de CSV direto no navegador de quem
+// abre o dashboard, sem precisar expor dado de cliente.
 function getStats() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const entrada = ss.getSheetByName(ABA_ENTRADA);
   const lastRow = entrada.getLastRow();
   if (lastRow < 2) {
-    return { total: 0, comCodigo: 0, porStatus: {}, porDia: {} };
+    return {
+      total: 0, comCodigo: 0, porStatus: {}, porDia: {},
+      porLoja: {}, porCidade: {}, porFaixaValor: {}, detalhe: [],
+    };
   }
 
   const dados = entrada.getRange(2, 1, lastRow - 1, CABECALHO_ENTRADA.length).getValues();
   const porStatus = {};
   const porDia = {};
+  const porLoja = {};
+  const porCidade = {};
+  const porFaixaValor = {};
+  const detalhe = [];
   let comCodigo = 0;
 
   dados.forEach(function (linha) {
@@ -325,6 +422,32 @@ function getStats() {
       diaChave = String(data).slice(0, 10);
     }
     if (diaChave) porDia[diaChave] = (porDia[diaChave] || 0) + 1;
+
+    const loja = String(linha[COL.NOME_REVENDA - 1] || "").trim();
+    if (loja) porLoja[loja] = (porLoja[loja] || 0) + 1;
+
+    const cidade = String(linha[COL.CIDADE - 1] || "").trim();
+    if (cidade) porCidade[cidade] = (porCidade[cidade] || 0) + 1;
+
+    const valor = linha[COL.VALOR_ANUNCIO - 1];
+    const faixa = faixaDeValor(valor);
+    porFaixaValor[faixa] = (porFaixaValor[faixa] || 0) + 1;
+
+    detalhe.push({
+      data: diaChave,
+      status: status,
+      temCodigo: !!codigo,
+      marca: linha[COL.MARCA - 1] || "",
+      modelo: linha[COL.MODELO - 1] || "",
+      ano: linha[COL.ANO - 1] || "",
+      tipoBase: linha[COL.TIPO_BASE - 1] || "",
+      versao: linha[COL.VERSAO - 1] || "",
+      type: linha[COL.TYPE - 1] || "",
+      nomeRevenda: loja,
+      revDDD: linha[COL.REV_DDD - 1] || "",
+      valorAnuncio: valor || "",
+      cidade: cidade,
+    });
   });
 
   return {
@@ -332,6 +455,10 @@ function getStats() {
     comCodigo: comCodigo,
     porStatus: porStatus,
     porDia: porDia,
+    porLoja: porLoja,
+    porCidade: porCidade,
+    porFaixaValor: porFaixaValor,
+    detalhe: detalhe,
     atualizadoEm: new Date().toISOString(),
   };
 }
@@ -419,16 +546,16 @@ function repararLinhaTeste() {
 
   processarPendentes();
 
-  // O alert() so funciona quando a Sheets tem uma UI ativa na hora da chamada
-  // (varia conforme a forma que voce roda a funcao pelo editor). Envolvemos
-  // em try/catch pra nunca aparecer como "erro" no registro -- o que importa
-  // (corrigir e reprocessar a linha) ja rodou nas linhas acima.
+  // O alert() só funciona quando a Sheets tem uma UI ativa na hora da chamada
+  // (varia conforme a forma que você roda a função pelo editor). Envolvemos
+  // em try/catch pra nunca aparecer como "erro" no registro — o que importa
+  // (corrigir e reprocessar a linha) já rodou nas linhas acima.
   try {
     SpreadsheetApp.getUi().alert(
       "Linha " + NUMERO_LINHA + " corrigida (e-mail = " + EMAIL_CORRETO + ") e reprocessada.\n" +
       "Confira o novo Status na coluna N."
     );
   } catch (err) {
-    Logger.log("Linha " + NUMERO_LINHA + " corrigida e reprocessada (alerta de UI indisponivel neste contexto).");
+    Logger.log("Linha " + NUMERO_LINHA + " corrigida e reprocessada (alerta de UI indisponível neste contexto).");
   }
 }

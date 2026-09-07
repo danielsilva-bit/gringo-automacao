@@ -21,12 +21,21 @@
   .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; }
   .stat { font-size:26px; font-weight:700; }
   .label { color:var(--muted); font-size:12.5px; margin-top:2px; }
+
+  .filtros { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:20px; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:14px 16px; }
+  .campo { display:flex; flex-direction:column; gap:4px; min-width:150px; }
+  .campo label { font-size:12px; color:var(--muted); }
+  .campo select { padding:7px 8px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:13px; }
+  .btn { padding:8px 14px; border-radius:8px; border:1px solid var(--border); background:var(--accent); color:#fff; font-size:13px; font-weight:600; cursor:pointer; }
+  .btn.secundario { background:transparent; color:var(--text); }
+  .btn:hover { opacity:.9; }
+
   .charts { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
   @media (max-width:800px){ .charts{grid-template-columns:1fr;} }
   .chart-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; }
   .chart-card h3 { margin:0 0 12px; font-size:14px; color:var(--muted); font-weight:600; }
   .err { color:#b91c1c; font-size:13px; }
-  canvas { max-height:260px; }
+  canvas { max-height:280px; }
 </style>
 </head>
 <body>
@@ -35,23 +44,170 @@
 
   <div class="grid" id="stats"></div>
 
+  <div class="filtros">
+    <div class="campo">
+      <label for="filtroLoja">Loja / Revenda</label>
+      <select id="filtroLoja"><option value="">Todas</option></select>
+    </div>
+    <div class="campo">
+      <label for="filtroCidade">Cidade</label>
+      <select id="filtroCidade"><option value="">Todas</option></select>
+    </div>
+    <div class="campo">
+      <label for="filtroFaixa">Faixa de valor</label>
+      <select id="filtroFaixa"><option value="">Todas</option></select>
+    </div>
+    <button class="btn secundario" id="btnLimpar">Limpar filtros</button>
+    <button class="btn" id="btnCsv">Baixar CSV (filtrado)</button>
+  </div>
+
   <div class="charts">
     <div class="chart-card"><h3>Leads por dia</h3><canvas id="chartDia"></canvas></div>
     <div class="chart-card"><h3>Status do processamento</h3><canvas id="chartStatus"></canvas></div>
     <div class="chart-card"><h3>Com código x sem código</h3><canvas id="chartCodigo"></canvas></div>
+    <div class="chart-card"><h3>Leads por loja</h3><canvas id="chartLoja"></canvas></div>
+    <div class="chart-card"><h3>Leads por cidade (top 10)</h3><canvas id="chartCidade"></canvas></div>
+    <div class="chart-card"><h3>Leads por faixa de valor</h3><canvas id="chartFaixa"></canvas></div>
   </div>
 
 <script>
 // Este dashboard nunca lê a planilha diretamente nem PII de cliente — ele só
 // chama o endpoint getStats do Web App do Apps Script, que devolve números
-// agregados (total, por dia, por status). O DASH_TOKEN abaixo é de baixo
-// privilégio: só dá acesso a essas estatísticas, nada além disso.
+// agregados e uma lista `detalhe` por lead SEM nome/e-mail/telefone/protocolo
+// (só dados do anúncio/loja: marca, modelo, loja, cidade, valor, status, dia).
+// O DASH_TOKEN abaixo é de baixo privilégio: só dá acesso a isso, nada além.
 const WEBAPP_URL = "https://script.google.com/macros/s/AKfycbxU0XpwgLz9s5rvpBYUxeJTXWqx7UMN6e9nuCm5JpfRqZ39pmlaLDHsvG9K6n26JYLZcA/exec";
 const DASH_TOKEN = "76012856-6680-4b87-8c9a-bf2c01465edd";
 
+let DETALHE = []; // array completo, sem filtro, vindo do getStats
+let charts = {};
+
 function cor(i) {
-  const p = ["#16a34a","#2563eb","#f59e0b","#dc2626","#7c3aed","#0891b2"];
+  const p = ["#16a34a","#2563eb","#f59e0b","#dc2626","#7c3aed","#0891b2","#db2777","#65a30d"];
   return p[i % p.length];
+}
+
+function groupCount(rows, keyFn) {
+  const out = {};
+  rows.forEach(function (r) {
+    const k = keyFn(r);
+    if (!k) return;
+    out[k] = (out[k] || 0) + 1;
+  });
+  return out;
+}
+
+function topN(obj, n) {
+  return Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n);
+}
+
+function preencherOpcoes(select, valores, atual) {
+  const atuais = new Set(valores);
+  select.innerHTML = '<option value="">Todas</option>' +
+    [...atuais].sort().map(v => `<option value="${v}">${v}</option>`).join("");
+  select.value = atual && atuais.has(atual) ? atual : "";
+}
+
+function linhasFiltradas() {
+  const loja = document.getElementById("filtroLoja").value;
+  const cidade = document.getElementById("filtroCidade").value;
+  const faixa = document.getElementById("filtroFaixa").value;
+  return DETALHE.filter(function (r) {
+    if (loja && r.nomeRevenda !== loja) return false;
+    if (cidade && r.cidade !== cidade) return false;
+    if (faixa && r.faixaValor !== faixa) return false;
+    return true;
+  });
+}
+
+function destruirChart(id) {
+  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+}
+
+function renderTudo() {
+  const linhas = linhasFiltradas();
+  const total = linhas.length;
+  const comCodigo = linhas.filter(r => r.temCodigo).length;
+  const porStatus = groupCount(linhas, r => r.status || "Sem status");
+  const porDia = groupCount(linhas, r => r.data);
+  const porLoja = groupCount(linhas, r => r.nomeRevenda);
+  const porCidade = groupCount(linhas, r => r.cidade);
+  const porFaixa = groupCount(linhas, r => r.faixaValor);
+
+  const enviados = porStatus["Enviado"] || 0;
+  const pendentes = porStatus["Pendente_RPA"] || 0;
+
+  document.getElementById("stats").innerHTML = `
+    <div class="card"><div class="stat">${total}</div><div class="label">Leads (filtro atual)</div></div>
+    <div class="card"><div class="stat">${comCodigo}</div><div class="label">Com código de anúncio</div></div>
+    <div class="card"><div class="stat">${enviados}</div><div class="label">Enviados via RPA</div></div>
+    <div class="card"><div class="stat">${pendentes}</div><div class="label">Pendentes de envio</div></div>
+  `;
+
+  const diasOrdenados = Object.keys(porDia).sort();
+  destruirChart("dia");
+  charts.dia = new Chart(document.getElementById("chartDia"), {
+    type: "line",
+    data: { labels: diasOrdenados, datasets: [{ label: "Leads", data: diasOrdenados.map(d=>porDia[d]), borderColor: cor(0), tension:.3 }] },
+    options: { plugins:{legend:{display:false}}, scales:{ y:{beginAtZero:true} } }
+  });
+
+  destruirChart("status");
+  charts.status = new Chart(document.getElementById("chartStatus"), {
+    type: "doughnut",
+    data: { labels: Object.keys(porStatus), datasets: [{ data: Object.values(porStatus), backgroundColor: Object.keys(porStatus).map((_,i)=>cor(i)) }] }
+  });
+
+  destruirChart("codigo");
+  charts.codigo = new Chart(document.getElementById("chartCodigo"), {
+    type: "pie",
+    data: { labels: ["Com código", "Sem código"], datasets: [{ data: [comCodigo, total-comCodigo], backgroundColor:[cor(0), cor(3)] }] }
+  });
+
+  const lojaTop = topN(porLoja, 10);
+  destruirChart("loja");
+  charts.loja = new Chart(document.getElementById("chartLoja"), {
+    type: "bar",
+    data: { labels: lojaTop.map(x=>x[0]), datasets: [{ label:"Leads", data: lojaTop.map(x=>x[1]), backgroundColor: cor(1) }] },
+    options: { indexAxis:"y", plugins:{legend:{display:false}}, scales:{ x:{beginAtZero:true} } }
+  });
+
+  const cidadeTop = topN(porCidade, 10);
+  destruirChart("cidade");
+  charts.cidade = new Chart(document.getElementById("chartCidade"), {
+    type: "bar",
+    data: { labels: cidadeTop.map(x=>x[0]), datasets: [{ label:"Leads", data: cidadeTop.map(x=>x[1]), backgroundColor: cor(2) }] },
+    options: { indexAxis:"y", plugins:{legend:{display:false}}, scales:{ x:{beginAtZero:true} } }
+  });
+
+  // Ordem fixa das faixas, da mais barata pra mais cara, "Sem valor" por último.
+  const ordemFaixas = ["Até 30 mil","30 a 60 mil","60 a 100 mil","100 a 150 mil","Acima de 150 mil","Sem valor"];
+  const faixasOrdenadas = ordemFaixas.filter(f => porFaixa[f]);
+  destruirChart("faixa");
+  charts.faixa = new Chart(document.getElementById("chartFaixa"), {
+    type: "bar",
+    data: { labels: faixasOrdenadas, datasets: [{ label:"Leads", data: faixasOrdenadas.map(f=>porFaixa[f]), backgroundColor: cor(4) }] },
+    options: { plugins:{legend:{display:false}}, scales:{ y:{beginAtZero:true} } }
+  });
+}
+
+function baixarCsv() {
+  const linhas = linhasFiltradas();
+  const colunas = ["data","status","temCodigo","marca","modelo","ano","tipoBase","versao","type","nomeRevenda","revDDD","valorAnuncio","cidade","faixaValor"];
+  const escapar = v => `"${String(v === undefined || v === null ? "" : v).replace(/"/g,'""')}"`;
+  const linhasCsv = [colunas.join(",")].concat(
+    linhas.map(r => colunas.map(c => escapar(r[c])).join(","))
+  );
+  const csv = "﻿" + linhasCsv.join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "gringo-leads-" + new Date().toISOString().slice(0,10) + ".csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 async function carregar() {
@@ -64,37 +220,41 @@ async function carregar() {
     document.getElementById("atualizado").textContent =
       "Atualizado em " + new Date().toLocaleString("pt-BR") + " · " + stats.total + " leads na aba Entrada";
 
-    const enviados = stats.porStatus["Enviado"] || 0;
-    const pendentes = stats.porStatus["Pendente_RPA"] || 0;
+    DETALHE = (stats.detalhe || []).map(r => Object.assign({}, r, { faixaValor: faixaDeValorCliente(r.valorAnuncio) }));
 
-    document.getElementById("stats").innerHTML = `
-      <div class="card"><div class="stat">${stats.total}</div><div class="label">Leads totais</div></div>
-      <div class="card"><div class="stat">${stats.comCodigo}</div><div class="label">Com código de anúncio</div></div>
-      <div class="card"><div class="stat">${enviados}</div><div class="label">Enviados via RPA</div></div>
-      <div class="card"><div class="stat">${pendentes}</div><div class="label">Pendentes de envio</div></div>
-    `;
+    preencherOpcoes(document.getElementById("filtroLoja"), DETALHE.map(r=>r.nomeRevenda).filter(Boolean));
+    preencherOpcoes(document.getElementById("filtroCidade"), DETALHE.map(r=>r.cidade).filter(Boolean));
+    preencherOpcoes(document.getElementById("filtroFaixa"), DETALHE.map(r=>r.faixaValor).filter(Boolean));
 
-    const diasOrdenados = Object.keys(stats.porDia).sort();
-    new Chart(document.getElementById("chartDia"), {
-      type: "line",
-      data: { labels: diasOrdenados, datasets: [{ label: "Leads", data: diasOrdenados.map(d=>stats.porDia[d]), borderColor: cor(0), tension:.3 }] },
-      options: { plugins:{legend:{display:false}}, scales:{ y:{beginAtZero:true} } }
-    });
-
-    new Chart(document.getElementById("chartStatus"), {
-      type: "doughnut",
-      data: { labels: Object.keys(stats.porStatus), datasets: [{ data: Object.values(stats.porStatus), backgroundColor: Object.keys(stats.porStatus).map((_,i)=>cor(i)) }] }
-    });
-
-    new Chart(document.getElementById("chartCodigo"), {
-      type: "pie",
-      data: { labels: ["Com código", "Sem código"], datasets: [{ data: [stats.comCodigo, stats.total-stats.comCodigo], backgroundColor:[cor(0), cor(3)] }] }
-    });
-
+    renderTudo();
   } catch (e) {
     document.getElementById("atualizado").innerHTML = `<span class="err">Não consegui carregar os dados: ${e.message}. Confirme WEBAPP_URL e DASH_TOKEN no topo do script.</span>`;
   }
 }
+
+// Espelha faixaDeValor() do Code.gs, só pra reclassificar no cliente caso o
+// valor mude e a página não tenha sido recarregada — mantém consistência com
+// o filtro de faixa vindo do próprio backend.
+function faixaDeValorCliente(valor) {
+  const v = Number(valor) || 0;
+  if (!v) return "Sem valor";
+  if (v < 30000) return "Até 30 mil";
+  if (v < 60000) return "30 a 60 mil";
+  if (v < 100000) return "60 a 100 mil";
+  if (v < 150000) return "100 a 150 mil";
+  return "Acima de 150 mil";
+}
+
+document.getElementById("filtroLoja").addEventListener("change", renderTudo);
+document.getElementById("filtroCidade").addEventListener("change", renderTudo);
+document.getElementById("filtroFaixa").addEventListener("change", renderTudo);
+document.getElementById("btnCsv").addEventListener("click", baixarCsv);
+document.getElementById("btnLimpar").addEventListener("click", function () {
+  document.getElementById("filtroLoja").value = "";
+  document.getElementById("filtroCidade").value = "";
+  document.getElementById("filtroFaixa").value = "";
+  renderTudo();
+});
 
 carregar();
 </script>
