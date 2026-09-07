@@ -78,7 +78,31 @@ dado que já estavam lá. Idem pra aba `Entrada`, com `atualizarCabecalhoEntrada
 também cresceu, com os mesmos campos, pra cada lead carregar consigo o anúncio/loja
 que bateu no PROCV).
 
-### 5. Validar o robô antes de ligar de vez
+### 5. Dashboard com a cara da marca, mapa por estado e "linha de manchete"
+
+O `docs/index.html` ganhou uma repaginada:
+
+- **Cores**: paleta tirada direto dos logos (azul e amarelo do Gringo, marinho e
+  verde do usadosbr) — sem depender de light/dark mode do sistema, o dashboard
+  já nasce no tema escuro "painel vivo".
+- **Linha de manchete**: uma faixa rolando no topo (estilo bolsa de valores) com
+  valor total em anúncios, total de leads, % de match, loja e cidade líderes —
+  atualiza sozinha a cada 5 minutos junto com o resto do dashboard.
+- **Cartões gerais**: além dos que já existiam, agora mostra também **valor
+  total em R$** e **% de match**, tudo respeitando os filtros aplicados.
+- **Aba "Mapa por Estado"**: um mapa do Brasil (SVG, pacote `@svg-maps/brazil` de
+  Victor Cazanave, licença CC-BY 4.0 — crédito no rodapé do próprio mapa) colorido
+  por estado, com dois modos (% de leads com match / valor R$), tooltip ao passar
+  o mouse e uma tabela de ranking ao lado. O estado é inferido a partir da coluna
+  `Cidade` do estoque — pra funcionar melhor, preencha essa coluna como
+  `Cidade - UF` (ex.: `Ribeirão Preto - SP`); o dashboard também reconhece boa
+  parte das capitais e cidades grandes só pelo nome, mas o sufixo `- UF` é o que
+  garante 100% de acerto.
+
+Nenhuma dessas mudanças exige rodar nada novo no Apps Script — é tudo calculado no
+navegador a partir do mesmo `detalhe` que o `getStats` já devolvia.
+
+### 6. Validar o robô antes de ligar de vez
 
 O formulário de contato do anúncio eu só consegui inspecionar visualmente pelas suas
 telas (campos `#whatsapp-name`, `#whatsapp-email`, `#whatsapp-telefone` e um botão
