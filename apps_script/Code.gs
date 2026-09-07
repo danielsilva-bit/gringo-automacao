@@ -34,6 +34,7 @@
 const ABA_ENTRADA = "Entrada";
 const ABA_ESTOQUE = "Estoque_base_Dados";
 const ABA_CONFIG = "Config";
+const ABA_RELATORIO = "Relatorio_Destinatarios";
 
 // As colunas novas (17-24) foram sempre ACRESCENTADAS no final, nunca inseridas
 // no meio — isso preserva as posições de Status/Protocolo/Data_Envio_RPA que já
@@ -82,6 +83,11 @@ const CABECALHO_ESTOQUE = [
   "Valor_Anuncio", "Cidade",
 ];
 
+// Lista de quem recebe o relatório diário por e-mail — cada linha é um
+// destinatário; marque Ativo=FALSE (em vez de apagar a linha) pra pausar o
+// envio pra alguém sem perder o histórico de quem já esteve na lista.
+const CABECALHO_RELATORIO = ["Email", "Ativo"];
+
 const STATUS_PENDENTE = "Pendente_RPA";
 const STATUS_SEM_MATCH = "Codigo_Sem_Match";
 const STATUS_SEM_CODIGO = "Sem_Codigo";
@@ -129,18 +135,77 @@ function configurarPlanilhaV1() {
     dashToken = Utilities.getUuid();
     props.setProperty("DASH_TOKEN", dashToken);
   }
-  config.clear();
-  config.getRange(1, 1, 4, 2).setValues([
-    ["Chave", "Valor"],
-    ["TOKEN", token],
-    ["DASH_TOKEN", dashToken],
-    ["Atualizado em", new Date()],
-  ]);
+  // Só limpa/recria a aba Config na primeiríssima vez (aba vazia). Rodar essa
+  // função de novo depois NÃO apaga chaves que você tenha configurado nela
+  // (ex.: Horario_Relatorio) — só garante TOKEN/DASH_TOKEN atualizados.
+  if (config.getLastRow() === 0) {
+    config.getRange(1, 1, 4, 2).setValues([
+      ["Chave", "Valor"],
+      ["TOKEN", token],
+      ["DASH_TOKEN", dashToken],
+      ["Atualizado em", new Date()],
+    ]);
+  } else {
+    escreverConfigValor("TOKEN", token);
+    escreverConfigValor("DASH_TOKEN", dashToken);
+    escreverConfigValor("Atualizado em", new Date());
+  }
+
+  // Configuração do relatório diário por e-mail — só preenche um valor padrão
+  // se a chave ainda não existir (nunca sobrescreve um horário que você já
+  // tenha ajustado na planilha).
+  if (!lerConfigValor("Horario_Relatorio")) {
+    escreverConfigValor("Horario_Relatorio", "08:00");
+  }
+  if (!lerConfigValor("Ultimo_Envio_Relatorio")) {
+    escreverConfigValor("Ultimo_Envio_Relatorio", "");
+  }
+
+  let relatorio = ss.getSheetByName(ABA_RELATORIO);
+  if (!relatorio) {
+    relatorio = ss.insertSheet(ABA_RELATORIO);
+    relatorio.getRange(1, 1, 1, CABECALHO_RELATORIO.length).setValues([CABECALHO_RELATORIO]);
+    relatorio.getRange(2, 1, 1, 2).setValues([["daniel.silva@usadosbr.com", true]]);
+    relatorio.setFrozenRows(1);
+  }
 
   SpreadsheetApp.getUi().alert(
-    "Planilha configurada.\n\nAba Entrada e Config prontas.\n" +
+    "Planilha configurada.\n\nAba Entrada, Config e Relatorio_Destinatarios prontas.\n" +
     "Confirme os cabeçalhos da aba Estoque_base_Dados e rode instalarGatilho() em seguida."
   );
+}
+
+// Lê um valor da aba Config pela chave (coluna A), procurando na coluna B.
+// Devolve `padrao` (undefined se não passado) se a chave não existir ainda.
+function lerConfigValor(chave, padrao) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const config = ss.getSheetByName(ABA_CONFIG);
+  if (!config) return padrao;
+  const lastRow = config.getLastRow();
+  if (lastRow < 2) return padrao;
+  const dados = config.getRange(2, 1, lastRow - 1, 2).getValues();
+  for (let i = 0; i < dados.length; i++) {
+    if (String(dados[i][0]).trim() === chave) return dados[i][1];
+  }
+  return padrao;
+}
+
+// Escreve um valor na aba Config pela chave — atualiza a linha se a chave já
+// existir, ou acrescenta uma linha nova no final se ainda não existir. Nunca
+// mexe nas outras linhas.
+function escreverConfigValor(chave, valor) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const config = ss.getSheetByName(ABA_CONFIG);
+  if (!config) return;
+  const lastRow = config.getLastRow();
+  const dados = lastRow >= 2 ? config.getRange(2, 1, lastRow - 1, 1).getValues() : [];
+  for (let i = 0; i < dados.length; i++) {
+    if (String(dados[i][0]).trim() === chave) {
+      config.getRange(i + 2, 2).setValue(valor);
+      return;
+    }
+  }
+  config.getRange(lastRow + 1, 1, 1, 2).setValues([[chave, valor]]);
 }
 
 // Reescreve SÓ a linha 1 (cabeçalho) da aba Entrada com as colunas atuais —
@@ -364,8 +429,45 @@ function doGet(e) {
       .setMimeType(ContentService.MimeType.JSON);
   }
 
+  if (acao === "getConfigRelatorio") {
+    return ContentService.createTextOutput(JSON.stringify(getConfigRelatorio()))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
   return ContentService.createTextOutput(JSON.stringify({ erro: "ação desconhecida" }))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// Configuração do relatório diário por e-mail: horário configurado, data do
+// último envio (pra evitar mandar duas vezes no mesmo dia) e a lista de
+// e-mails ativos na aba Relatorio_Destinatarios. Usado pelo robô de relatório
+// no GitHub Actions — mesmo TOKEN de privilégio do robô de RPA (não é
+// exposto no dashboard público).
+function getConfigRelatorio() {
+  const horario = String(lerConfigValor("Horario_Relatorio", "08:00")).trim();
+  const ultimoEnvioRaw = lerConfigValor("Ultimo_Envio_Relatorio", "");
+  let ultimoEnvio = "";
+  if (ultimoEnvioRaw instanceof Date) {
+    ultimoEnvio = Utilities.formatDate(ultimoEnvioRaw, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  } else if (ultimoEnvioRaw) {
+    ultimoEnvio = String(ultimoEnvioRaw).slice(0, 10);
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const aba = ss.getSheetByName(ABA_RELATORIO);
+  const destinatarios = [];
+  if (aba) {
+    const lastRow = aba.getLastRow();
+    if (lastRow >= 2) {
+      aba.getRange(2, 1, lastRow - 1, 2).getValues().forEach(function (linha) {
+        const email = String(linha[0] || "").trim();
+        const ativo = linha[1] === true || String(linha[1]).toLowerCase() === "true";
+        if (email && ativo) destinatarios.push(email);
+      });
+    }
+  }
+
+  return { horario: horario, ultimoEnvio: ultimoEnvio, destinatarios: destinatarios };
 }
 
 // Agrupa o valor do anúncio numa faixa de preço, pra montar o "perfil de valor"
@@ -479,6 +581,15 @@ function doPost(e) {
   }
   if (acao === "marcarErro") {
     marcarStatus(protocolo, STATUS_ERRO);
+    return ContentService.createTextOutput(JSON.stringify({ ok: true }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  if (acao === "marcarRelatorioEnviado") {
+    escreverConfigValor(
+      "Ultimo_Envio_Relatorio",
+      Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd")
+    );
     return ContentService.createTextOutput(JSON.stringify({ ok: true }))
       .setMimeType(ContentService.MimeType.JSON);
   }
