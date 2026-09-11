@@ -56,7 +56,7 @@
   .ticker-item b { color:var(--green); font-weight:700; }
   @keyframes rolar { from{ transform:translateX(0);} to{ transform:translateX(-50%);} }
 
-  .abas { display:flex; gap:10px; margin-bottom:18px; padding-bottom:12px; border-bottom:1px solid var(--panel-border); }
+  .abas { display:flex; justify-content:center; gap:10px; margin-bottom:18px; padding-bottom:12px; border-bottom:1px solid var(--panel-border); }
   .aba {
     position:relative;
     padding:11px 22px;
@@ -119,9 +119,9 @@
   .tabela-funil thead th:first-child { background:linear-gradient(180deg, #11487d, #0d3868); }
   .tabela-funil tbody tr:nth-child(even) td { background:rgba(255,255,255,.025); }
   .tabela-funil tbody tr:hover td { background:rgba(255,255,255,.06); }
-  .tabela-funil tbody tr:nth-child(even) td.mes { background:rgba(0,168,64,.32); }
-  .tabela-funil td.mes, .tabela-funil th.mes { background:rgba(0,168,64,.24); border-left:2px solid #00c85f; font-weight:800; color:#eafff2; }
-  .tabela-funil th.mes { color:#fff; border-left:2px solid #00c85f; }
+  .tabela-funil tbody tr:nth-child(even) td.mes { background:rgba(37,107,177,.34); }
+  .tabela-funil td.mes, .tabela-funil th.mes { background:rgba(37,107,177,.24); border-left:2px solid #4aa8e0; font-weight:800; color:#eaf3fb; }
+  .tabela-funil th.mes { color:#fff; border-left:2px solid #4aa8e0; }
   .tabela-funil tr.linha-pct td { color:var(--muted); font-size:12px; }
   .tabela-funil tr.linha-segurada td { color:var(--muted); font-style:italic; }
   .funil-nota { margin-top:14px; font-size:12px; color:var(--muted); }
@@ -182,7 +182,12 @@
   .mapa-mini-card { background:var(--panel); border:1px solid var(--panel-border); border-radius:var(--radius); padding:18px; margin-bottom:22px; }
   .mapa-mini-card .mapa-mini-corpo { display:grid; grid-template-columns:1.4fr 1fr; gap:18px; align-items:start; }
   @media (max-width:900px){ .mapa-mini-card .mapa-mini-corpo{grid-template-columns:1fr;} }
-  #mapaBrasilHome { width:100%; height:auto; max-height:420px; }
+  #mapaBrasilHome { width:100%; height:auto; max-height:520px; }
+  .ranking-home-wrap { max-height:230px; overflow-y:auto; margin:12px 0; }
+  .tabela-estados-home { width:100%; border-collapse:collapse; font-size:12px; }
+  .tabela-estados-home th, .tabela-estados-home td { text-align:left; padding:5px 6px; border-bottom:1px solid var(--panel-border); }
+  .tabela-estados-home th { color:var(--muted); font-weight:600; font-size:10.5px; text-transform:uppercase; position:sticky; top:0; background:var(--panel); }
+  .tabela-estados-home td.num, .tabela-estados-home th.num { text-align:right; font-variant-numeric:tabular-nums; }
   #mapaBrasilHome path { stroke:#04101c; stroke-width:1; }
   .rotulo-uf-home { font-size:9px; font-weight:700; fill:#eaf3fb; paint-order:stroke; stroke:#04101c; stroke-width:2px; stroke-linejoin:round; pointer-events:none; font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; }
   .rotulo-uf-home-fundo { fill:rgba(4,16,28,.55); pointer-events:none; }
@@ -213,32 +218,6 @@
     </div>
 
     <div class="pagina ativa" id="pagina-geral">
-      <div class="grid" id="stats"></div>
-
-      <div class="funil-mapa-linha">
-        <div class="secao-card">
-          <h3>Resumo do funil</h3>
-          <div class="funil-tabela-wrap">
-            <table class="tabela-funil" id="tabelaFunilResumoHome"></table>
-          </div>
-        </div>
-
-        <div class="mapa-mini-card">
-          <h3 style="margin:0 0 12px;font-size:13px;color:var(--muted);font-weight:600;">Distribuição de clientes por estado</h3>
-          <div class="mapa-mini-corpo">
-            <div id="mapaHomeContainer"></div>
-            <div>
-              <div class="legenda">
-                <span id="legendaMinHome">0%</span>
-                <div class="barra" id="legendaBarraHome"></div>
-                <span id="legendaMaxHome">0%</span>
-              </div>
-              <div class="creditos-mapa">% do total de clientes (leads) em cada estado, considerando os filtros acima. Mesmo mapa e cores da aba "Mapa por estado".</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div class="filtros">
         <div class="campo">
           <label for="filtroLoja">Loja / Revenda</label>
@@ -274,6 +253,38 @@
         </div>
         <button class="btn secundario" id="btnLimpar">Limpar filtros</button>
         <button class="btn" id="btnCsv">Baixar CSV (filtrado)</button>
+      </div>
+
+      <div class="grid" id="stats"></div>
+
+      <div class="funil-mapa-linha">
+        <div class="secao-card">
+          <h3>Resumo do funil</h3>
+          <div class="funil-tabela-wrap">
+            <table class="tabela-funil" id="tabelaFunilResumoHome"></table>
+          </div>
+        </div>
+
+        <div class="mapa-mini-card">
+          <h3 style="margin:0 0 12px;font-size:13px;color:var(--muted);font-weight:600;">Distribuição de clientes por estado</h3>
+          <div class="mapa-mini-corpo">
+            <div id="mapaHomeContainer"></div>
+            <div>
+              <div class="legenda">
+                <span id="legendaMinHome">0%</span>
+                <div class="barra" id="legendaBarraHome"></div>
+                <span id="legendaMaxHome">0%</span>
+              </div>
+              <div class="ranking-home-wrap">
+                <table class="tabela-estados-home">
+                  <thead><tr><th>Estado</th><th class="num">Leads</th><th class="num">%</th></tr></thead>
+                  <tbody id="tabelaEstadosHomeCorpo"></tbody>
+                </table>
+              </div>
+              <div class="creditos-mapa">% do total de clientes (leads) em cada estado, considerando os filtros acima. Mesmo mapa e cores da aba "Mapa por estado".</div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="charts">
@@ -1033,6 +1044,20 @@ function renderMapaHome() {
   if (legendaMax) legendaMax.textContent = Math.round(maximoPct) + "%";
   const legendaMin = document.getElementById("legendaMinHome");
   if (legendaMin) legendaMin.textContent = "0%";
+
+  // Ranking por estado (igual à aba "Mapa por Estado"), pra dar o mesmo nível
+  // de interatividade/informação no mini-mapa da Visão geral.
+  const corpoRanking = document.getElementById("tabelaEstadosHomeCorpo");
+  if (corpoRanking) {
+    const linhasRanking = Object.entries(porEstadoTotal)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 15)
+      .map(([uf, v]) => {
+        const pct = totalGeral ? Math.round((v / totalGeral) * 100) : 0;
+        return `<tr><td>${nomeEstado(uf)} (${uf})</td><td class="num">${v}</td><td class="num">${pct}%</td></tr>`;
+      }).join("");
+    corpoRanking.innerHTML = linhasRanking || `<tr><td colspan="3" style="color:var(--muted)">Sem dados de cidade/estado ainda.</td></tr>`;
+  }
 }
 
 function configurarMapaHome() {
