@@ -1,14 +1,10 @@
 name: Gringo RPA - preencher leads
 
-# IMPORTANTE — trava de segurança:
-# O agendamento automático (schedule) fica DESLIGADO até o robô ser validado
-# manualmente (dry_run=true, depois dry_run=false numa única linha de teste).
-# Enquanto isso, o único jeito de rodar é manualmente via "Run workflow".
-# Depois de validar, reative o bloco `schedule:` abaixo (descomente) para voltar
-# a rodar sozinho a cada 15 min.
+# Robô validado com lead real (protocolo TESTE001, confirmado por print do Daniel
+# em 09/09) — agendamento automático reativado a pedido dele, rodando a cada 15 min.
 on:
-  # schedule:
-  #   - cron: "*/15 * * * *"
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -39,8 +35,9 @@ jobs:
         env:
           SHEET_WEBAPP_URL: ${{ secrets.SHEET_WEBAPP_URL }}
           SHEET_TOKEN: ${{ secrets.SHEET_TOKEN }}
-          # Só roda "ao vivo" (DRY_RUN=false) quando alguém dispara manualmente
-          # e escolhe explicitamente dry_run=false. Qualquer outro caso (inclusive
-          # um schedule futuro reativado sem querer) cai em modo simulação, por segurança.
-          DRY_RUN: ${{ github.event.inputs.dry_run != 'false' }}
+          # Disparo automático (schedule): sempre roda "ao vivo" (DRY_RUN=false),
+          # preenchendo os leads de verdade — é o objetivo do agendamento.
+          # Disparo manual (workflow_dispatch): mantém o padrão seguro, só roda
+          # "ao vivo" se a pessoa escolher explicitamente dry_run=false.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'false' }}
         run: node preencherLead.js
