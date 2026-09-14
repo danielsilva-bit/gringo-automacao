@@ -92,7 +92,8 @@
   .card { background:var(--panel); border:1px solid var(--panel-border); border-radius:var(--radius); padding:16px; }
   .stat { font-size:25px; font-weight:800; }
   .stat.verde { color:var(--green); }
-  .stat.amarelo { color:var(--yellow); }
+  .stat.amarelo { color:var(--yellow); font-size:19px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .stat.vermelho { color:var(--red); }
   .label { color:var(--muted); font-size:12px; margin-top:3px; }
 
   .filtros { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:20px; background:var(--panel); border:1px solid var(--panel-border); border-radius:var(--radius); padding:14px 16px; }
@@ -215,6 +216,7 @@
       <div class="aba ativa" data-pagina="geral">Visão geral</div>
       <div class="aba" data-pagina="mapa">Mapa por estado</div>
       <div class="aba" data-pagina="resumo">Resumo do funil</div>
+      <div class="aba" data-pagina="site">Leads Aprovados - UBR</div>
     </div>
 
     <div class="pagina ativa" id="pagina-geral">
@@ -345,6 +347,23 @@
         acima de propósito — é o total geral, igual à planilha. "Interações" só espelha Clientes Atendidos por
         enquanto (100%) e "Pré-aprovados" ainda não existe (V2).</div>
     </div>
+
+    <div class="pagina" id="pagina-site">
+      <div class="grid" id="statsSite"></div>
+
+      <div class="secao-card">
+        <h3>Como ler esse funil</h3>
+        <div class="funil-nota" id="narrativaSite"></div>
+      </div>
+
+      <div class="charts">
+        <div class="chart-card"><h3>Clientes por dia (status da simulação)</h3><canvas id="chartSiteDia"></canvas></div>
+        <div class="chart-card"><h3>Status das simulações</h3><canvas id="chartSiteStatus"></canvas></div>
+        <div class="chart-card"><h3>Abordados por dia</h3><canvas id="chartSiteAbordadosDia"></canvas></div>
+        <div class="chart-card"><h3>Funil de abordagem</h3><canvas id="chartSiteFunil"></canvas></div>
+        <div class="chart-card"><h3>Match realizado x sem match</h3><canvas id="chartSiteMatch"></canvas></div>
+      </div>
+    </div>
   </div>
 
   <div class="tooltip-mapa" id="tooltipMapa"></div>
@@ -359,6 +378,8 @@ const WEBAPP_URL = "https://script.google.com/macros/s/AKfycbxU0XpwgLz9s5rvpBYUx
 const DASH_TOKEN = "76012856-6680-4b87-8c9a-bf2c01465edd";
 
 let DETALHE = []; // array completo, sem filtro, vindo do getStats
+let REMATCH_POR_DIA = {}; // contagem de rematches por dia, vindo direto da aba "Rematch" (getStats().porRematchDia) — não é filtrado pelos filtros da Visão geral
+let SITE_STATS = {}; // vem direto de getStats().site (getStatsSite() no Code.gs) — funil de simulação de crédito no site, não é filtrado pelos filtros da Visão geral
 let charts = {};
 let metricaMapaAtual = "match";
 let tipoGraficoDia = "bar"; // alternado pelo botão Linha/Barra no card "Leads por dia" — Daniel pediu Barra como padrão
@@ -482,14 +503,14 @@ function renderTudo() {
   const codigoSemMatch = linhas.filter(r => !r.temCodigo && r.status === "Codigo_Sem_Match").length;
   const semCodigo = total - comCodigo - codigoSemMatch;
 
-  // Rematches automáticos: hoje o único sinal que chega no dashboard é o
-  // status "Enviado_Rematch" (reenvio automático confirmado pelo robô) — a
-  // aba "Rematch" da planilha guarda o detalhe completo (motivo, revenda
-  // nova etc.), mas não é exposta aqui.
-  const linhasRematch = linhas.filter(r => r.status === "Enviado_Rematch");
-  const porRematchDia = groupCount(linhasRematch, r => r.data);
+  // Rematches automáticos: agora vem direto da aba "Rematch" da planilha
+  // (getStats().porRematchDia) — conta TODA tentativa automática registrada
+  // no momento em que ela acontece, não só as que já voltaram confirmadas
+  // como "Enviado_Rematch" na Entrada. Igual ao "Resumo do funil", não
+  // respeita os filtros da Visão geral (mostra o total geral da aba Rematch).
+  const porRematchDia = REMATCH_POR_DIA;
   const diasRematchOrdenados = Object.keys(porRematchDia).sort();
-  const totalRematches = linhasRematch.length;
+  const totalRematches = diasRematchOrdenados.reduce((s, d) => s + (porRematchDia[d] || 0), 0);
   const pctEnviado = comCodigo ? Math.round((enviados / comCodigo) * 100) : 0;
 
   document.getElementById("stats").innerHTML = `
@@ -582,6 +603,7 @@ function renderTudo() {
   renderMapa();
   renderMapaHome();
   renderResumoFunil();
+  renderSite();
 }
 
 function preencherFiltroMesDia(todosDiasOrdenados) {
@@ -742,6 +764,139 @@ function renderResumoFunil() {
 
   const htmlFinal = theadHtml + tbodyHtml;
   tabelas.forEach(t => { t.innerHTML = htmlFinal; });
+}
+
+// ---------- Leads Aprovados - UBR (funil de simulação de crédito no site) ----------
+// Não depende dos filtros da Visão geral (mesma lógica do Resumo do funil / dos
+// Rematches automáticos) — vem pronto agregado de getStats().site
+// (getStatsSite() no Code.gs), sem nenhum dado pessoal do cliente.
+
+function fmtPctSite(n, base) {
+  return base ? Math.round((n / base) * 100) + "%" : "0%";
+}
+
+function renderSite() {
+  const statsSiteEl = document.getElementById("statsSite");
+  if (!statsSiteEl) return; // página ainda não existe nesta versão do HTML
+
+  const s = SITE_STATS || {};
+  const porStatus = s.porStatus || { approved: 0, reproved: 0, error: 0 };
+  const total = s.totalSimulacoes || 0;
+  const aprovados = porStatus.approved || 0;
+  const recusados = porStatus.reproved || 0;
+  const erros = porStatus.error || 0;
+  const abordados = s.abordados || 0;
+  const comInteracao = s.comInteracao || 0;
+  const comInteresse = s.comInteresse || 0;
+  const semInteresse = s.semInteresse || 0;
+  const matchRealizado = s.matchRealizado || 0;
+  const semMatch = s.semMatch || 0;
+  const ticketMedio = s.ticketMedioAprovados || 0;
+
+  statsSiteEl.innerHTML = `
+    <div class="card"><div class="stat">${total}</div><div class="label">Clientes recebidos (simularam no site)</div></div>
+    <div class="card"><div class="stat verde">${aprovados}</div><div class="label">Pré-aprovados (${fmtPctSite(aprovados, total)})</div></div>
+    <div class="card"><div class="stat vermelho">${recusados}</div><div class="label">Recusados (${fmtPctSite(recusados, total)})</div></div>
+    <div class="card"><div class="stat">${erros}</div><div class="label">Erro (${fmtPctSite(erros, total)})</div></div>
+    <div class="card"><div class="stat">${abordados}</div><div class="label">Abordados (${fmtPctSite(abordados, aprovados)} dos aprovados)</div></div>
+    <div class="card"><div class="stat">${comInteracao}</div><div class="label">Com interação (${fmtPctSite(comInteracao, abordados)} dos abordados)</div></div>
+    <div class="card"><div class="stat verde">${matchRealizado}</div><div class="label">Direcionados para loja (match)</div></div>
+    <div class="card"><div class="stat amarelo">R$ ${formatarMoeda(ticketMedio)}</div><div class="label">Ticket médio de aprovados</div></div>
+  `;
+
+  const narrativa = document.getElementById("narrativaSite");
+  if (narrativa) {
+    narrativa.innerHTML =
+      `<b>${total}</b> clientes simularam crédito no site. Desse total, <b>${fmtPctSite(aprovados, total)}</b> foram pré-aprovados (${aprovados}), <b>${fmtPctSite(recusados, total)}</b> recusados (${recusados}) e <b>${fmtPctSite(erros, total)}</b> deram erro (${erros}).<br>` +
+      `Dos pré-aprovados, abordamos <b>${abordados}</b> (${fmtPctSite(abordados, aprovados)}). Do total de aprovados que mandamos mensagem, <b>${comInteracao}</b> interagiram (${fmtPctSite(comInteracao, abordados)}).<br>` +
+      `Das interações, <b>${comInteresse}</b> tiveram interesse e <b>${semInteresse}</b> não tiveram interesse. Dos com interesse, fizemos match em <b>${matchRealizado}</b> e ficamos sem match em <b>${semMatch}</b>.`;
+  }
+
+  // Clientes por dia, por status da simulação (aprovado/recusado/erro empilhados)
+  const porDiaStatus = s.porDiaStatus || {};
+  const diasStatusOrdenados = Object.keys(porDiaStatus).sort();
+  destruirChart("siteDia");
+  const chartSiteDiaEl = document.getElementById("chartSiteDia");
+  if (chartSiteDiaEl) {
+    charts.siteDia = new Chart(chartSiteDiaEl, {
+      type: "bar",
+      data: {
+        labels: diasStatusOrdenados,
+        datasets: [
+          { label: "Aprovado", data: diasStatusOrdenados.map(d => (porDiaStatus[d] || {}).approved || 0), backgroundColor: "#00c85f" },
+          { label: "Recusado", data: diasStatusOrdenados.map(d => (porDiaStatus[d] || {}).reproved || 0), backgroundColor: "#e5484d" },
+          { label: "Erro", data: diasStatusOrdenados.map(d => (porDiaStatus[d] || {}).error || 0), backgroundColor: "#2f8fd6" },
+        ],
+      },
+      options: {
+        plugins: { legend: { labels: { color: "#eaf3fb" } }, datalabels: { display: false } },
+        scales: {
+          x: { stacked: true, grid: { display: false } },
+          y: { stacked: true, beginAtZero: true, ticks: { precision: 0 }, grid: { color: "rgba(255,255,255,.06)" } },
+        },
+      },
+    });
+  }
+
+  // Status das simulações (donut com %)
+  destruirChart("siteStatus");
+  const chartSiteStatusEl = document.getElementById("chartSiteStatus");
+  if (chartSiteStatusEl) {
+    charts.siteStatus = new Chart(chartSiteStatusEl, {
+      type: "doughnut",
+      data: {
+        labels: ["Aprovado", "Recusado", "Erro"],
+        datasets: [{ data: [aprovados, recusados, erros], backgroundColor: ["#00c85f", "#e5484d", "#2f8fd6"] }],
+      },
+      options: { plugins: { legend: { labels: { color: "#eaf3fb" } }, datalabels: rotuloFatia } },
+    });
+  }
+
+  // Abordados por dia
+  const porDiaAbordados = s.porDiaAbordados || {};
+  const diasAbordadosOrdenados = Object.keys(porDiaAbordados).sort();
+  destruirChart("siteAbordadosDia");
+  const chartSiteAbordadosDiaEl = document.getElementById("chartSiteAbordadosDia");
+  if (chartSiteAbordadosDiaEl) {
+    charts.siteAbordadosDia = new Chart(chartSiteAbordadosDiaEl, {
+      type: "bar",
+      data: { labels: diasAbordadosOrdenados, datasets: [{ label: "Abordados", data: diasAbordadosOrdenados.map(d => porDiaAbordados[d] || 0), backgroundColor: cor(0) }] },
+      options: {
+        plugins: { legend: { display: false }, datalabels: { ...rotuloClaro, align: "top", anchor: "end" } },
+        scales: { y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: "rgba(255,255,255,.06)" } }, x: { grid: { display: false } } },
+      },
+    });
+  }
+
+  // Funil de abordagem: abordados (impactados) -> com interesse -> sem interesse
+  destruirChart("siteFunil");
+  const chartSiteFunilEl = document.getElementById("chartSiteFunil");
+  if (chartSiteFunilEl) {
+    charts.siteFunil = new Chart(chartSiteFunilEl, {
+      type: "bar",
+      data: {
+        labels: ["Abordados (impactados)", "Com interesse", "Sem interesse"],
+        datasets: [{ label: "Clientes", data: [abordados, comInteresse, semInteresse], backgroundColor: cor(1) }],
+      },
+      options: {
+        indexAxis: "y",
+        layout: { padding: { right: 6 } },
+        plugins: { legend: { display: false }, datalabels: { ...rotuloClaro, align: "start", anchor: "end" } },
+        scales: { x: { beginAtZero: true, grid: { color: "rgba(255,255,255,.06)" } }, y: { grid: { display: false } } },
+      },
+    });
+  }
+
+  // Match realizado x sem match (só entre quem teve interesse)
+  destruirChart("siteMatch");
+  const chartSiteMatchEl = document.getElementById("chartSiteMatch");
+  if (chartSiteMatchEl) {
+    charts.siteMatch = new Chart(chartSiteMatchEl, {
+      type: "doughnut",
+      data: { labels: ["Match realizado", "Sem match"], datasets: [{ data: [matchRealizado, semMatch], backgroundColor: ["#00c85f", "#e5484d"] }] },
+      options: { plugins: { legend: { labels: { color: "#eaf3fb" } }, datalabels: rotuloFatia } },
+    });
+  }
 }
 
 // ---------- Mapa por estado ----------
@@ -1178,6 +1333,8 @@ async function carregar() {
       faixaValor: faixaDeValorCliente(r.valorAnuncio),
       estado: extrairUF(r.cidade),
     }));
+    REMATCH_POR_DIA = stats.porRematchDia || {};
+    SITE_STATS = stats.site || {};
 
     preencherOpcoes(document.getElementById("filtroLoja"), DETALHE.map(r=>r.nomeRevenda).filter(Boolean));
     preencherOpcoes(document.getElementById("filtroCidade"), DETALHE.map(r=>r.cidade).filter(Boolean));
