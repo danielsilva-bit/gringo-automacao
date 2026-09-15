@@ -246,6 +246,7 @@
       <div class="aba" data-pagina="mapa">Mapa por estado</div>
       <div class="aba" data-pagina="resumo">Resumo do funil</div>
       <div class="aba" data-pagina="site">Leads Aprovados - UBR</div>
+      <div class="aba" data-pagina="gerencial">Gerencial Lead</div>
     </div>
 
     <div class="pagina ativa" id="pagina-geral">
@@ -284,6 +285,17 @@
           </select>
         </div>
         <div class="campo">
+          <label for="filtroStatus">Status</label>
+          <select id="filtroStatus">
+            <option value="">Todos</option>
+            <option value="Enviado">Enviado</option>
+            <option value="Pendente_RPA">Processando (Pendente_RPA)</option>
+            <option value="Erro_RPA">Erro_RPA</option>
+            <option value="Codigo_Sem_Match">Código sem match</option>
+            <option value="Sem_Codigo">Sem código</option>
+          </select>
+        </div>
+        <div class="campo">
           <label for="filtroDataDe">Data de</label>
           <input type="date" id="filtroDataDe">
         </div>
@@ -293,56 +305,6 @@
         </div>
         <button class="btn secundario" id="btnLimpar">Limpar filtros</button>
         <button class="btn" id="btnCsv">Baixar CSV (filtrado)</button>
-      </div>
-
-      <div class="card-refresh-match">
-        <h3>🔄 Refresh Match - Reprocessar Lead</h3>
-        <p>
-          Use para leads travados em <strong>Erro_RPA</strong> (link removido/vendido)
-          ou <strong>Codigo_Sem_Match</strong> (veículo não está mais no estoque).<br>
-          O sistema tenta achar um veículo equivalente (mesma marca/modelo, ano ±2, mesmo DDD do
-          cliente) — as mesmas regras do rematch automático. Cada clique faz mais uma tentativa,
-          mesmo que esse lead já tenha sido reprocessado antes (o estoque muda com o tempo).
-        </p>
-        <div class="refresh-input-group">
-          <input
-            type="text"
-            id="inputProtocoloRefresh"
-            placeholder="Cole o protocolo do lead (ex: PROT-001)"
-            onkeypress="if(event.key==='Enter') executarRefreshMatch();"
-          >
-          <button class="btn refresh" onclick="executarRefreshMatch()">🔄 Reprocessar</button>
-          <button class="btn secundario" onclick="document.getElementById('inputProtocoloRefresh').value='';">Limpar</button>
-        </div>
-        <div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--panel-border);">
-          <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">
-            <strong>Rematch em Massa:</strong> reprocessa TODOS os leads travados em Erro_RPA e
-            Codigo_Sem_Match, mesmo os que já foram reprocessados antes. Os dois filtros abaixo
-            valem só pra essa rodada (não mudam o padrão do sistema).
-          </div>
-          <div class="massa-opcoes">
-            <div class="campo">
-              <label for="massaPlataforma">Plataforma</label>
-              <select id="massaPlataforma">
-                <option value="AMBOS">Ambos (UBR + MOTO)</option>
-                <option value="UBR">Só USADOSBR</option>
-                <option value="MOTO">Só MOTO.COM.BR</option>
-              </select>
-            </div>
-            <div class="campo">
-              <label for="massaRangeAno">Diferença de ano</label>
-              <select id="massaRangeAno">
-                <option value="1">± 1 ano</option>
-                <option value="2" selected>± 2 anos (padrão)</option>
-                <option value="3">± 3 anos</option>
-              </select>
-            </div>
-          </div>
-          <button class="btn massa" onclick="executarRefreshMatchEmMassa()" style="width:100%;">
-            ⚡ Rematch em Massa
-          </button>
-        </div>
-        <div id="feedbackRefresh" class="feedback-refresh"></div>
       </div>
 
       <div class="grid" id="stats"></div>
@@ -371,7 +333,7 @@
                   <tbody id="tabelaEstadosHomeCorpo"></tbody>
                 </table>
               </div>
-              <div class="creditos-mapa">% do total de clientes (leads) em cada estado, considerando os filtros acima. Mesmo mapa e cores da aba "Mapa por estado".</div>
+              <div class="creditos-mapa">% do total de clientes (leads) em cada estado, considerando os filtros acima. Mesmo mapa e cores da aba "Mapa por estado". A soma das linhas bate 100% (±1 de arredondamento) — "Outros estados" junta o que não coube no top 15 e "Cidade não identificada" são leads sem estado reconhecível na Cidade.</div>
             </div>
           </div>
         </div>
@@ -450,6 +412,88 @@
         <div class="chart-card"><h3>Abordados por dia</h3><canvas id="chartSiteAbordadosDia"></canvas></div>
         <div class="chart-card"><h3>Funil de abordagem</h3><canvas id="chartSiteFunil"></canvas></div>
         <div class="chart-card"><h3>Match realizado x sem match</h3><canvas id="chartSiteMatch"></canvas></div>
+      </div>
+    </div>
+
+    <div class="pagina" id="pagina-gerencial">
+      <div class="card-refresh-match">
+        <h3>🔄 Refresh Match - Reprocessar Lead (Receptivo)</h3>
+        <p>
+          Use para leads travados em <strong>Erro_RPA</strong> (link removido/vendido)
+          ou <strong>Codigo_Sem_Match</strong> (veículo não está mais no estoque).<br>
+          O sistema tenta achar um veículo equivalente (mesma marca/modelo, ano ±2, mesmo DDD do
+          cliente) — as mesmas regras do rematch automático. Cada clique faz mais uma tentativa,
+          mesmo que esse lead já tenha sido reprocessado antes (o estoque muda com o tempo).
+        </p>
+        <div class="refresh-input-group">
+          <input
+            type="text"
+            id="inputProtocoloRefresh"
+            placeholder="Cole o protocolo do lead (ex: PROT-001)"
+            onkeypress="if(event.key==='Enter') executarRefreshMatch();"
+          >
+          <button class="btn refresh" onclick="executarRefreshMatch()">🔄 Reprocessar</button>
+          <button class="btn secundario" onclick="document.getElementById('inputProtocoloRefresh').value='';">Limpar</button>
+        </div>
+        <div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--panel-border);">
+          <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">
+            <strong>Rematch em Massa:</strong> reprocessa TODOS os leads travados em Erro_RPA e
+            Codigo_Sem_Match, mesmo os que já foram reprocessados antes. Os dois filtros abaixo
+            valem só pra essa rodada (não mudam o padrão do sistema).
+          </div>
+          <div class="massa-opcoes">
+            <div class="campo">
+              <label for="massaPlataforma">Plataforma</label>
+              <select id="massaPlataforma">
+                <option value="AMBOS">Ambos (UBR + MOTO)</option>
+                <option value="UBR">Só USADOSBR</option>
+                <option value="MOTO">Só MOTO.COM.BR</option>
+              </select>
+            </div>
+            <div class="campo">
+              <label for="massaRangeAno">Diferença de ano</label>
+              <select id="massaRangeAno">
+                <option value="1">± 1 ano</option>
+                <option value="2" selected>± 2 anos (padrão)</option>
+                <option value="3">± 3 anos</option>
+              </select>
+            </div>
+          </div>
+          <button class="btn massa" onclick="executarRefreshMatchEmMassa()" style="width:100%;">
+            ⚡ Rematch em Massa
+          </button>
+        </div>
+        <div id="feedbackRefresh" class="feedback-refresh"></div>
+      </div>
+
+      <div class="card-refresh-match">
+        <h3>🔄 Rematch Ativos - Reprocessar Lead (Site)</h3>
+        <p>
+          Use para CPFs presos em <strong>aprovado_sem_match</strong> no funil Ativo (o cliente
+          topou ser contatado, mas na hora não tinha revenda compatível). O sistema tenta achar
+          uma revenda dentro da faixa de ±R$10.000 do valor aprovado, no mesmo DDD do cliente —
+          e nunca reoferece um anúncio que esse CPF já recebeu antes (histórico na aba Rematch_Site).
+        </p>
+        <div class="refresh-input-group">
+          <input
+            type="text"
+            id="inputCpfRefreshAtivo"
+            placeholder="Cole o CPF do cliente (ex: 111.111.111-11)"
+            onkeypress="if(event.key==='Enter') executarRefreshMatchAtivo();"
+          >
+          <button class="btn refresh" onclick="executarRefreshMatchAtivo()">🔄 Reprocessar</button>
+          <button class="btn secundario" onclick="document.getElementById('inputCpfRefreshAtivo').value='';">Limpar</button>
+        </div>
+        <div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--panel-border);">
+          <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">
+            <strong>Rematch Ativos em Massa:</strong> reprocessa TODOS os CPFs presos em
+            aprovado_sem_match de uma vez.
+          </div>
+          <button class="btn massa" onclick="executarRefreshMatchAtivoEmMassa()" style="width:100%;">
+            ⚡ Rematch Ativos em Massa
+          </button>
+        </div>
+        <div id="feedbackRefreshAtivo" class="feedback-refresh"></div>
       </div>
     </div>
   </div>
@@ -535,6 +579,7 @@ function linhasFiltradas() {
   const estado = document.getElementById("filtroEstado").value;
   const credicarro = document.getElementById("filtroCredicarro").value;
   const tipoVeiculo = document.getElementById("filtroTipoVeiculo").value;
+  const status = document.getElementById("filtroStatus").value;
   const dataDe = document.getElementById("filtroDataDe").value;
   const dataAte = document.getElementById("filtroDataAte").value;
   return DETALHE.filter(function (r) {
@@ -545,6 +590,11 @@ function linhasFiltradas() {
     if (credicarro === "sim" && !r.lojaCredicarro) return false;
     if (credicarro === "nao" && r.lojaCredicarro) return false;
     if (tipoVeiculo && r.tipoVeiculo !== tipoVeiculo) return false;
+    // "Enviado" no filtro cobre Enviado + Enviado_Rematch, igual ao resto do
+    // dashboard (Enviado_Rematch é só um Enviado que passou por um rematch
+    // antes) — as outras opções batem 1 pra 1 com o Status cru da planilha.
+    if (status === "Enviado" && r.status !== "Enviado" && r.status !== "Enviado_Rematch") return false;
+    if (status && status !== "Enviado" && r.status !== status) return false;
     if (dataDe && (!r.data || r.data < dataDe)) return false;
     if (dataAte && (!r.data || r.data > dataAte)) return false;
     return true;
@@ -1300,16 +1350,44 @@ function renderMapaHome() {
 
   // Ranking por estado (igual à aba "Mapa por Estado"), pra dar o mesmo nível
   // de interatividade/informação no mini-mapa da Visão geral.
+  //
+  // Correção (15/09, reportado pelo Daniel: "somando os % não bate 100%"):
+  // duas causas, as duas reais. (1) a tabela só mostra os 15 estados de maior
+  // volume — com leads espalhados por mais de 15 estados, o resto simplesmente
+  // não aparecia em lugar nenhum. (2) `calcularDistribuicaoPorEstado()` pula
+  // qualquer lead cuja Cidade não bate com nenhum estado reconhecido (célula
+  // vazia, ou texto que `extrairUF()` não reconhece) — esse lead não entra em
+  // NENHUM balde de estado, mas `totalGeral` (denominador do %) conta ele do
+  // mesmo jeito. Ou seja, os % de cada estado sempre estavam certos
+  // individualmente (contagem do estado ÷ total geral), só a SOMA de todos os
+  // estados visíveis nunca batia 100%, porque uma fatia dos leads não tem
+  // como saber o estado. Corrigido somando duas linhas extra quando existem:
+  // "Outros estados" (os que não couberam no top 15) e "Cidade não
+  // identificada" (os que nem entram em nenhum estado) — agora a soma de
+  // TODAS as linhas da tabela bate 100% (a menos de ±1 ponto por
+  // arredondamento independente de cada linha, normal).
   const corpoRanking = document.getElementById("tabelaEstadosHomeCorpo");
   if (corpoRanking) {
-    const linhasRanking = Object.entries(porEstadoTotal)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 15)
-      .map(([uf, v]) => {
-        const pct = totalGeral ? Math.round((v / totalGeral) * 100) : 0;
-        return `<tr><td>${nomeEstado(uf)} (${uf})</td><td class="num">${v}</td><td class="num">${pct}%</td></tr>`;
-      }).join("");
-    corpoRanking.innerHTML = linhasRanking || `<tr><td colspan="3" style="color:var(--muted)">Sem dados de cidade/estado ainda.</td></tr>`;
+    const entradasOrdenadas = Object.entries(porEstadoTotal).sort((a, b) => b[1] - a[1]);
+    const top15 = entradasOrdenadas.slice(0, 15);
+    const restante = entradasOrdenadas.slice(15);
+    const somaEstadosConhecidos = entradasOrdenadas.reduce((s, [, v]) => s + v, 0);
+    const outrosEstadosQtd = restante.reduce((s, [, v]) => s + v, 0);
+    const naoIdentificadoQtd = Math.max(0, totalGeral - somaEstadosConhecidos);
+
+    const linhasRanking = top15.map(([uf, v]) => {
+      const pct = totalGeral ? Math.round((v / totalGeral) * 100) : 0;
+      return `<tr><td>${nomeEstado(uf)} (${uf})</td><td class="num">${v}</td><td class="num">${pct}%</td></tr>`;
+    });
+    if (outrosEstadosQtd > 0) {
+      const pct = totalGeral ? Math.round((outrosEstadosQtd / totalGeral) * 100) : 0;
+      linhasRanking.push(`<tr style="color:var(--muted)"><td>Outros estados (${restante.length})</td><td class="num">${outrosEstadosQtd}</td><td class="num">${pct}%</td></tr>`);
+    }
+    if (naoIdentificadoQtd > 0) {
+      const pct = totalGeral ? Math.round((naoIdentificadoQtd / totalGeral) * 100) : 0;
+      linhasRanking.push(`<tr style="color:var(--muted)"><td>Cidade não identificada</td><td class="num">${naoIdentificadoQtd}</td><td class="num">${pct}%</td></tr>`);
+    }
+    corpoRanking.innerHTML = linhasRanking.join("") || `<tr><td colspan="3" style="color:var(--muted)">Sem dados de cidade/estado ainda.</td></tr>`;
   }
 }
 
@@ -1514,6 +1592,94 @@ async function executarRefreshMatchEmMassa() {
   }
 }
 
+// ---------- Rematch Ativos (individual por CPF e em massa) ----------
+// Mesmo princípio do Refresh Match acima, só que pro funil Ativo (simulação
+// de crédito no site): tenta achar uma revenda dentro de ±R$10.000 do valor
+// aprovado pra CPFs presos em "aprovado_sem_match", sem nunca reoferecer um
+// anúncio que aquele CPF já recebeu antes (histórico na aba Rematch_Site).
+
+async function executarRefreshMatchAtivo() {
+  const cpf = document.getElementById("inputCpfRefreshAtivo").value.trim();
+  const feedback = document.getElementById("feedbackRefreshAtivo");
+
+  if (!cpf) {
+    feedback.innerHTML = "⚠️ Cole o CPF do cliente";
+    feedback.className = "feedback-refresh erro";
+    return;
+  }
+
+  feedback.innerHTML = "⏳ Processando...";
+  feedback.className = "feedback-refresh processando";
+
+  try {
+    const url = `${WEBAPP_URL}?action=refreshMatchAtivo&cpf=${encodeURIComponent(cpf)}&token=${encodeURIComponent(DASH_TOKEN)}`;
+    const resp = await fetch(url, { method: "POST" });
+    const data = await resp.json();
+
+    if (data.sucesso) {
+      feedback.innerHTML = `✅ ${data.mensagem}`;
+      feedback.className = "feedback-refresh sucesso";
+      document.getElementById("inputCpfRefreshAtivo").value = "";
+      setTimeout(carregar, 2000);
+    } else {
+      feedback.innerHTML = `❌ ${data.erro}`;
+      feedback.className = "feedback-refresh erro";
+    }
+  } catch (err) {
+    feedback.innerHTML = `❌ Erro: ${err.message}`;
+    feedback.className = "feedback-refresh erro";
+  }
+}
+
+async function executarRefreshMatchAtivoEmMassa() {
+  const feedback = document.getElementById("feedbackRefreshAtivo");
+  feedback.innerHTML = "⏳ Reprocessando CPFs presos em aprovado_sem_match...";
+  feedback.className = "feedback-refresh processando";
+
+  // Mesmo padrão de lotes/continuação do Rematch em Massa do Receptivo.
+  let totalSucesso = 0, totalSemMatch = 0;
+  const todosDetalhes = [];
+  let lotes = 0;
+
+  try {
+    while (true) {
+      lotes++;
+      const url = `${WEBAPP_URL}?action=refreshMatchAtivoEmMassa&token=${encodeURIComponent(DASH_TOKEN)}`;
+      const resp = await fetch(url, { method: "POST" });
+      const data = await resp.json();
+
+      if (!data.sucesso) {
+        feedback.innerHTML = `❌ ${data.erro}` + (lotes > 1 ? ` (depois de ${lotes - 1} lote(s) processado(s) com sucesso)` : "");
+        feedback.className = "feedback-refresh erro";
+        setTimeout(carregar, 2000);
+        return;
+      }
+
+      totalSucesso += data.sucessoQtd || 0;
+      totalSemMatch += data.semMatchQtd || 0;
+      todosDetalhes.push(...(data.resultados || []));
+
+      const restantes = data.restantes || 0;
+      if (restantes > 0) {
+        feedback.innerHTML = `⏳ Processados ${totalSucesso + totalSemMatch} até agora, ainda restam ~${restantes}... continuando`;
+        continue; // próximo lote
+      }
+      break;
+    }
+
+    const detalhes = todosDetalhes.map(r => `<li>${r.cpf}: ${r.resultado}</li>`).join("");
+    feedback.innerHTML =
+      `✅ ${totalSucesso} com novo match, ${totalSemMatch} sem candidato ainda` +
+      (lotes > 1 ? ` (em ${lotes} lotes)` : "") +
+      (detalhes ? `<ul>${detalhes}</ul>` : "");
+    feedback.className = "feedback-refresh sucesso";
+    setTimeout(carregar, 2000);
+  } catch (err) {
+    feedback.innerHTML = `❌ Erro: ${err.message}` + (lotes > 1 ? ` (depois de ${lotes - 1} lote(s) processado(s) com sucesso)` : "");
+    feedback.className = "feedback-refresh erro";
+  }
+}
+
 async function carregar() {
   try {
     const url = `${WEBAPP_URL}?action=getStats&token=${encodeURIComponent(DASH_TOKEN)}`;
@@ -1559,6 +1725,7 @@ document.getElementById("filtroFaixa").addEventListener("change", renderTudo);
 document.getElementById("filtroEstado").addEventListener("change", renderTudo);
 document.getElementById("filtroCredicarro").addEventListener("change", renderTudo);
 document.getElementById("filtroTipoVeiculo").addEventListener("change", renderTudo);
+document.getElementById("filtroStatus").addEventListener("change", renderTudo);
 document.getElementById("filtroDataDe").addEventListener("change", renderTudo);
 document.getElementById("filtroDataAte").addEventListener("change", renderTudo);
 document.getElementById("btnCsv").addEventListener("click", baixarCsv);
@@ -1569,6 +1736,7 @@ document.getElementById("btnLimpar").addEventListener("click", function () {
   document.getElementById("filtroEstado").value = "";
   document.getElementById("filtroCredicarro").value = "";
   document.getElementById("filtroTipoVeiculo").value = "";
+  document.getElementById("filtroStatus").value = "";
   document.getElementById("filtroDataDe").value = "";
   document.getElementById("filtroDataAte").value = "";
   renderTudo();
