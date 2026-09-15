@@ -130,6 +130,9 @@
   }
   .refresh-input-group input::placeholder { color:var(--muted); }
   .refresh-input-group input:focus { outline:none; border-color:var(--yellow); box-shadow:0 0 0 2px rgba(255,159,28,.2); }
+  /* Filtros do Rematch em Massa (Plataforma / Diferença de ano) — 15/09 */
+  .massa-opcoes { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:12px; }
+  .massa-opcoes .campo { min-width:170px; flex:1; }
   .feedback-refresh { margin-top:10px; font-size:12px; min-height:20px; color:var(--text); }
   .feedback-refresh.sucesso { color:var(--green); }
   .feedback-refresh.erro { color:var(--red); }
@@ -272,6 +275,15 @@
           </select>
         </div>
         <div class="campo">
+          <label for="filtroTipoVeiculo">Plataforma</label>
+          <select id="filtroTipoVeiculo">
+            <option value="">Todas</option>
+            <option value="MOTO.COM.BR">MOTO.COM.BR</option>
+            <option value="USADOSBR">USADOSBR</option>
+            <option value="-">Sem classificação</option>
+          </select>
+        </div>
+        <div class="campo">
           <label for="filtroDataDe">Data de</label>
           <input type="date" id="filtroDataDe">
         </div>
@@ -305,7 +317,26 @@
         <div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--panel-border);">
           <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">
             <strong>Rematch em Massa:</strong> reprocessa TODOS os leads travados em Erro_RPA e
-            Codigo_Sem_Match, mesmo os que já foram reprocessados antes.
+            Codigo_Sem_Match, mesmo os que já foram reprocessados antes. Os dois filtros abaixo
+            valem só pra essa rodada (não mudam o padrão do sistema).
+          </div>
+          <div class="massa-opcoes">
+            <div class="campo">
+              <label for="massaPlataforma">Plataforma</label>
+              <select id="massaPlataforma">
+                <option value="AMBOS">Ambos (UBR + MOTO)</option>
+                <option value="UBR">Só USADOSBR</option>
+                <option value="MOTO">Só MOTO.COM.BR</option>
+              </select>
+            </div>
+            <div class="campo">
+              <label for="massaRangeAno">Diferença de ano</label>
+              <select id="massaRangeAno">
+                <option value="1">± 1 ano</option>
+                <option value="2" selected>± 2 anos (padrão)</option>
+                <option value="3">± 3 anos</option>
+              </select>
+            </div>
           </div>
           <button class="btn massa" onclick="executarRefreshMatchEmMassa()" style="width:100%;">
             ⚡ Rematch em Massa
@@ -503,6 +534,7 @@ function linhasFiltradas() {
   const faixa = document.getElementById("filtroFaixa").value;
   const estado = document.getElementById("filtroEstado").value;
   const credicarro = document.getElementById("filtroCredicarro").value;
+  const tipoVeiculo = document.getElementById("filtroTipoVeiculo").value;
   const dataDe = document.getElementById("filtroDataDe").value;
   const dataAte = document.getElementById("filtroDataAte").value;
   return DETALHE.filter(function (r) {
@@ -512,6 +544,7 @@ function linhasFiltradas() {
     if (estado && r.estado !== estado) return false;
     if (credicarro === "sim" && !r.lojaCredicarro) return false;
     if (credicarro === "nao" && r.lojaCredicarro) return false;
+    if (tipoVeiculo && r.tipoVeiculo !== tipoVeiculo) return false;
     if (dataDe && (!r.data || r.data < dataDe)) return false;
     if (dataAte && (!r.data || r.data > dataAte)) return false;
     return true;
@@ -570,6 +603,12 @@ function renderTudo() {
   const totalRematches = diasRematchOrdenados.reduce((s, d) => s + (porRematchDia[d] || 0), 0);
   const pctEnviado = comCodigo ? Math.round((enviados / comCodigo) * 100) : 0;
 
+  // MOTO.COM.BR x USADOSBR (15/09, a pedido do Daniel): visão rápida de quantos
+  // leads (dentro do filtro atual) são de cada plataforma, além do filtro
+  // "Plataforma" acima, que deixa isolar só uma delas.
+  const qtdMoto = linhas.filter(r => r.tipoVeiculo === "MOTO.COM.BR").length;
+  const qtdCarro = linhas.filter(r => r.tipoVeiculo === "USADOSBR").length;
+
   document.getElementById("stats").innerHTML = `
     <div class="card"><div class="stat">${total}</div><div class="label">Leads (filtro atual)</div></div>
     <div class="card"><div class="stat verde">${comCodigo}</div><div class="label">Com código (match)</div></div>
@@ -577,6 +616,8 @@ function renderTudo() {
     <div class="card"><div class="stat">${pendentes}</div><div class="label">Pendentes de envio</div></div>
     <div class="card"><div class="stat verde">${pctEnviado}%</div><div class="label">% Enviados via RPA x Com código</div></div>
     <div class="card"><div class="stat amarelo">R$ ${formatarMoeda(valorTotal)}</div><div class="label">Valor total em anúncios</div></div>
+    <div class="card"><div class="stat">${qtdMoto}</div><div class="label">Leads MOTO.COM.BR</div></div>
+    <div class="card"><div class="stat">${qtdCarro}</div><div class="label">Leads USADOSBR</div></div>
   `;
 
   const todosDiasOrdenados = Object.keys(porDia).sort();
@@ -1357,7 +1398,7 @@ function atualizarTicker() {
 
 function baixarCsv() {
   const linhas = linhasFiltradas();
-  const colunas = ["data","status","temCodigo","marca","modelo","ano","tipoBase","versao","type","nomeRevenda","revDDD","valorAnuncio","cidade","faixaValor","lojaCredicarro"];
+  const colunas = ["data","status","temCodigo","marca","modelo","ano","tipoBase","versao","type","nomeRevenda","revDDD","valorAnuncio","cidade","faixaValor","lojaCredicarro","tipoVeiculo"];
   const escapar = v => `"${String(v === undefined || v === null ? "" : v).replace(/"/g,'""')}"`;
   const linhasCsv = [colunas.join(",")].concat(
     linhas.map(r => colunas.map(c => escapar(r[c])).join(","))
@@ -1416,7 +1457,13 @@ async function executarRefreshMatch() {
 
 async function executarRefreshMatchEmMassa() {
   const feedback = document.getElementById("feedbackRefresh");
-  feedback.innerHTML = "⏳ Reprocessando todos os leads travados...";
+  // Plataforma (UBR/MOTO/Ambos) e Range de ano (±1 a ±3) — 15/09, a pedido do
+  // Daniel. Os dois valem só pra essa execução (não mudam o padrão ±2 usado
+  // pelo Rematch automático nem pelo Reprocessar individual).
+  const plataforma = document.getElementById("massaPlataforma").value;
+  const rangeAno = document.getElementById("massaRangeAno").value;
+  const rotuloPlataforma = plataforma === "UBR" ? "USADOSBR" : plataforma === "MOTO" ? "MOTO.COM.BR" : "USADOSBR + MOTO.COM.BR";
+  feedback.innerHTML = `⏳ Reprocessando leads travados (${rotuloPlataforma}, ano ±${rangeAno})...`;
   feedback.className = "feedback-refresh processando";
 
   // O backend processa em lotes (pra não estourar o tempo máximo de execução
@@ -1430,7 +1477,8 @@ async function executarRefreshMatchEmMassa() {
   try {
     while (true) {
       lotes++;
-      const url = `${WEBAPP_URL}?action=refreshMatchEmMassa&token=${encodeURIComponent(DASH_TOKEN)}`;
+      const url = `${WEBAPP_URL}?action=refreshMatchEmMassa&token=${encodeURIComponent(DASH_TOKEN)}`
+        + `&plataforma=${encodeURIComponent(plataforma)}&rangeAno=${encodeURIComponent(rangeAno)}`;
       const resp = await fetch(url, { method: "POST" });
       const data = await resp.json();
 
@@ -1447,7 +1495,7 @@ async function executarRefreshMatchEmMassa() {
 
       const restantes = data.restantes || 0;
       if (restantes > 0) {
-        feedback.innerHTML = `⏳ Processados ${totalSucesso + totalSemMatch} até agora, ainda restam ~${restantes}... continuando`;
+        feedback.innerHTML = `⏳ Processados ${totalSucesso + totalSemMatch} até agora (${rotuloPlataforma}, ano ±${rangeAno}), ainda restam ~${restantes}... continuando`;
         continue; // próximo lote
       }
       break;
@@ -1455,7 +1503,7 @@ async function executarRefreshMatchEmMassa() {
 
     const detalhes = todosDetalhes.map(r => `<li>${r.protocolo}: ${r.resultado}</li>`).join("");
     feedback.innerHTML =
-      `✅ ${totalSucesso} com novo match, ${totalSemMatch} sem candidato ainda` +
+      `✅ ${totalSucesso} com novo match, ${totalSemMatch} sem candidato ainda (${rotuloPlataforma}, ano ±${rangeAno})` +
       (lotes > 1 ? ` (em ${lotes} lotes)` : "") +
       (detalhes ? `<ul>${detalhes}</ul>` : "");
     feedback.className = "feedback-refresh sucesso";
@@ -1510,6 +1558,7 @@ document.getElementById("filtroCidade").addEventListener("change", renderTudo);
 document.getElementById("filtroFaixa").addEventListener("change", renderTudo);
 document.getElementById("filtroEstado").addEventListener("change", renderTudo);
 document.getElementById("filtroCredicarro").addEventListener("change", renderTudo);
+document.getElementById("filtroTipoVeiculo").addEventListener("change", renderTudo);
 document.getElementById("filtroDataDe").addEventListener("change", renderTudo);
 document.getElementById("filtroDataAte").addEventListener("change", renderTudo);
 document.getElementById("btnCsv").addEventListener("click", baixarCsv);
@@ -1519,6 +1568,7 @@ document.getElementById("btnLimpar").addEventListener("click", function () {
   document.getElementById("filtroFaixa").value = "";
   document.getElementById("filtroEstado").value = "";
   document.getElementById("filtroCredicarro").value = "";
+  document.getElementById("filtroTipoVeiculo").value = "";
   document.getElementById("filtroDataDe").value = "";
   document.getElementById("filtroDataAte").value = "";
   renderTudo();
