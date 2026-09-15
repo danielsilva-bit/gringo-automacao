@@ -289,8 +289,8 @@
           Use para leads travados em <strong>Erro_RPA</strong> (link removido/vendido)
           ou <strong>Codigo_Sem_Match</strong> (veículo não está mais no estoque).<br>
           O sistema tenta achar um veículo equivalente (mesma marca/modelo, ano ±2, mesmo DDD do
-          cliente) — as mesmas regras do rematch automático. Cada lead só pode ser reprocessado
-          uma vez (confira a aba Rematch da planilha).
+          cliente) — as mesmas regras do rematch automático. Cada clique faz mais uma tentativa,
+          mesmo que esse lead já tenha sido reprocessado antes (o estoque muda com o tempo).
         </p>
         <div class="refresh-input-group">
           <input
@@ -305,7 +305,7 @@
         <div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--panel-border);">
           <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">
             <strong>Rematch em Massa:</strong> reprocessa TODOS os leads travados em Erro_RPA e
-            Codigo_Sem_Match que ainda não tiveram nenhuma tentativa de rematch.
+            Codigo_Sem_Match, mesmo os que já foram reprocessados antes.
           </div>
           <button class="btn massa" onclick="executarRefreshMatchEmMassa()" style="width:100%;">
             ⚡ Rematch em Massa
@@ -1423,7 +1423,7 @@ async function executarRefreshMatchEmMassa() {
   // do Apps Script agora que o estoque é o real, com muito mais linhas) e
   // avisa em "restantes" se ainda sobrou gente pra processar. Enquanto sobrar,
   // o dashboard chama de novo sozinho — pro Daniel é um clique só.
-  let totalSucesso = 0, totalSemMatch = 0, totalJaTentados = 0;
+  let totalSucesso = 0, totalSemMatch = 0;
   const todosDetalhes = [];
   let lotes = 0;
 
@@ -1443,7 +1443,6 @@ async function executarRefreshMatchEmMassa() {
 
       totalSucesso += data.sucessoQtd || 0;
       totalSemMatch += data.semMatchQtd || 0;
-      totalJaTentados += data.jaTentadosQtd || 0;
       todosDetalhes.push(...(data.resultados || []));
 
       const restantes = data.restantes || 0;
@@ -1457,7 +1456,6 @@ async function executarRefreshMatchEmMassa() {
     const detalhes = todosDetalhes.map(r => `<li>${r.protocolo}: ${r.resultado}</li>`).join("");
     feedback.innerHTML =
       `✅ ${totalSucesso} com novo match, ${totalSemMatch} sem candidato ainda` +
-      (totalJaTentados ? `, ${totalJaTentados} já tinham tentativa registrada` : "") +
       (lotes > 1 ? ` (em ${lotes} lotes)` : "") +
       (detalhes ? `<ul>${detalhes}</ul>` : "");
     feedback.className = "feedback-refresh sucesso";
