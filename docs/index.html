@@ -288,7 +288,7 @@
         <p>
           Use para leads travados em <strong>Erro_RPA</strong> (link removido/vendido)
           ou <strong>Codigo_Sem_Match</strong> (veículo não está mais no estoque).<br>
-          O sistema tenta achar um veículo equivalente (mesma marca/modelo, ano ±1, mesmo DDD do
+          O sistema tenta achar um veículo equivalente (mesma marca/modelo, ano ±2, mesmo DDD do
           cliente) — as mesmas regras do rematch automático. Cada lead só pode ser reprocessado
           uma vez (confira a aba Rematch da planilha).
         </p>
@@ -1419,27 +1419,51 @@ async function executarRefreshMatchEmMassa() {
   feedback.innerHTML = "⏳ Reprocessando todos os leads travados...";
   feedback.className = "feedback-refresh processando";
 
-  try {
-    const url = `${WEBAPP_URL}?action=refreshMatchEmMassa&token=${encodeURIComponent(DASH_TOKEN)}`;
-    const resp = await fetch(url, { method: "POST" });
-    const data = await resp.json();
+  // O backend processa em lotes (pra não estourar o tempo máximo de execução
+  // do Apps Script agora que o estoque é o real, com muito mais linhas) e
+  // avisa em "restantes" se ainda sobrou gente pra processar. Enquanto sobrar,
+  // o dashboard chama de novo sozinho — pro Daniel é um clique só.
+  let totalSucesso = 0, totalSemMatch = 0, totalJaTentados = 0;
+  const todosDetalhes = [];
+  let lotes = 0;
 
-    if (data.sucesso) {
-      const detalhes = (data.resultados || [])
-        .map(r => `<li>${r.protocolo}: ${r.resultado}</li>`)
-        .join("");
-      feedback.innerHTML =
-        `✅ ${data.sucessoQtd} com novo match, ${data.semMatchQtd} sem candidato ainda` +
-        (data.jaTentadosQtd ? `, ${data.jaTentadosQtd} já tinham tentativa registrada` : "") +
-        (detalhes ? `<ul>${detalhes}</ul>` : "");
-      feedback.className = "feedback-refresh sucesso";
-      setTimeout(carregar, 2000);
-    } else {
-      feedback.innerHTML = `❌ ${data.erro}`;
-      feedback.className = "feedback-refresh erro";
+  try {
+    while (true) {
+      lotes++;
+      const url = `${WEBAPP_URL}?action=refreshMatchEmMassa&token=${encodeURIComponent(DASH_TOKEN)}`;
+      const resp = await fetch(url, { method: "POST" });
+      const data = await resp.json();
+
+      if (!data.sucesso) {
+        feedback.innerHTML = `❌ ${data.erro}` + (lotes > 1 ? ` (depois de ${lotes - 1} lote(s) processado(s) com sucesso)` : "");
+        feedback.className = "feedback-refresh erro";
+        setTimeout(carregar, 2000);
+        return;
+      }
+
+      totalSucesso += data.sucessoQtd || 0;
+      totalSemMatch += data.semMatchQtd || 0;
+      totalJaTentados += data.jaTentadosQtd || 0;
+      todosDetalhes.push(...(data.resultados || []));
+
+      const restantes = data.restantes || 0;
+      if (restantes > 0) {
+        feedback.innerHTML = `⏳ Processados ${totalSucesso + totalSemMatch} até agora, ainda restam ~${restantes}... continuando`;
+        continue; // próximo lote
+      }
+      break;
     }
+
+    const detalhes = todosDetalhes.map(r => `<li>${r.protocolo}: ${r.resultado}</li>`).join("");
+    feedback.innerHTML =
+      `✅ ${totalSucesso} com novo match, ${totalSemMatch} sem candidato ainda` +
+      (totalJaTentados ? `, ${totalJaTentados} já tinham tentativa registrada` : "") +
+      (lotes > 1 ? ` (em ${lotes} lotes)` : "") +
+      (detalhes ? `<ul>${detalhes}</ul>` : "");
+    feedback.className = "feedback-refresh sucesso";
+    setTimeout(carregar, 2000);
   } catch (err) {
-    feedback.innerHTML = `❌ Erro: ${err.message}`;
+    feedback.innerHTML = `❌ Erro: ${err.message}` + (lotes > 1 ? ` (depois de ${lotes - 1} lote(s) processado(s) com sucesso)` : "");
     feedback.className = "feedback-refresh erro";
   }
 }
