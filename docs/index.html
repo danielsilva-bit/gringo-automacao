@@ -246,6 +246,7 @@
       <div class="aba" data-pagina="mapa">Mapa por estado</div>
       <div class="aba" data-pagina="resumo">Resumo do funil</div>
       <div class="aba" data-pagina="site">Leads Aprovados - UBR</div>
+      <div class="aba" data-pagina="faixaetaria">Faixa Etária</div>
       <div class="aba" data-pagina="gerencial">Gerencial Lead</div>
     </div>
 
@@ -296,6 +297,17 @@
           </select>
         </div>
         <div class="campo">
+          <label for="filtroFaixaAno">Faixa etária do veículo</label>
+          <select id="filtroFaixaAno">
+            <option value="">Todas</option>
+            <option value="2020+">2020+</option>
+            <option value="2015-2019">2015 a 2019</option>
+            <option value="2010-2014">2010 a 2014</option>
+            <option value="Antes de 2010">Antes de 2010</option>
+            <option value="-">Sem ano</option>
+          </select>
+        </div>
+        <div class="campo">
           <label for="filtroDataDe">Data de</label>
           <input type="date" id="filtroDataDe">
         </div>
@@ -339,6 +351,11 @@
         </div>
       </div>
 
+      <div class="secao-card">
+        <h3>Por que não chegamos a 100% de leads enviados?</h3>
+        <div class="funil-nota" id="narrativaNaoEnviados"></div>
+      </div>
+
       <div class="charts">
         <div class="chart-card">
           <div class="chart-card-cab">
@@ -356,9 +373,10 @@
         <div class="chart-card"><h3>Status do processamento</h3><canvas id="chartStatus"></canvas></div>
         <div class="chart-card"><h3>Com código x sem código x código sem match</h3><canvas id="chartCodigo"></canvas></div>
         <div class="chart-card"><h3 id="tituloRematch">Rematches automáticos</h3><canvas id="chartRematch"></canvas></div>
-        <div class="chart-card"><h3>Leads por loja</h3><canvas id="chartLoja"></canvas></div>
+        <div class="chart-card"><h3>Leads enviados por loja</h3><canvas id="chartLoja"></canvas></div>
         <div class="chart-card"><h3>Leads por estado (top 10)</h3><canvas id="chartEstado"></canvas></div>
         <div class="chart-card"><h3>Leads por faixa de valor</h3><canvas id="chartFaixa"></canvas></div>
+        <div class="chart-card"><h3>Motivo de não envio (leads não enviados)</h3><canvas id="chartMotivoNaoEnvio"></canvas></div>
       </div>
     </div>
 
@@ -412,6 +430,21 @@
         <div class="chart-card"><h3>Abordados por dia</h3><canvas id="chartSiteAbordadosDia"></canvas></div>
         <div class="chart-card"><h3>Funil de abordagem</h3><canvas id="chartSiteFunil"></canvas></div>
         <div class="chart-card"><h3>Match realizado x sem match</h3><canvas id="chartSiteMatch"></canvas></div>
+      </div>
+    </div>
+
+    <div class="pagina" id="pagina-faixaetaria">
+      <div class="funil-nota">Faixa etária do veículo, baseada no <b>Ano do anúncio</b> (não a idade do cliente). Ajuda a enxergar onde falta estoque de reposição: se o anúncio original vender, o cliente só consegue um rematch se existirem outros anúncios equivalentes na mesma faixa. Não respeita os filtros da Visão geral de propósito — mostra o total geral, igual a "Resumo do funil"/"Rematches automáticos".</div>
+      <div class="charts">
+        <div class="chart-card"><h3>Leads por faixa etária do veículo</h3><canvas id="chartFaixaAnoLeads"></canvas></div>
+        <div class="chart-card"><h3>Risco de rematch: leads recebidos x estoque disponível hoje</h3><canvas id="chartFaixaAnoRisco"></canvas></div>
+      </div>
+      <div class="secao-card">
+        <h3>Detalhe por faixa</h3>
+        <div class="funil-tabela-wrap">
+          <table class="tabela-funil" id="tabelaFaixaAno"></table>
+        </div>
+        <div class="funil-nota">"Leads por anúncio" = leads recebidos ÷ estoque disponível hoje na faixa — quanto maior, mais disputado é o estoque disponível pra um eventual rematch (linha destacada quando não há estoque nenhum na faixa, ou quando há mais leads do que anúncios disponíveis).</div>
       </div>
     </div>
 
@@ -512,6 +545,22 @@ const DASH_TOKEN = "76012856-6680-4b87-8c9a-bf2c01465edd";
 let DETALHE = []; // array completo, sem filtro, vindo do getStats
 let REMATCH_POR_DIA = {}; // contagem de rematches por dia, vindo direto da aba "Rematch" (getStats().porRematchDia) — não é filtrado pelos filtros da Visão geral
 let SITE_STATS = {}; // vem direto de getStats().site (getStatsSite() no Code.gs) — funil de simulação de crédito no site, não é filtrado pelos filtros da Visão geral
+let ESTOQUE_POR_FAIXA_ANO = {}; // vem direto de getStats().estoquePorFaixaAno — contagem de estoque REAL hoje por faixa etária do veículo, não é filtrado pelos filtros da Visão geral
+
+// Faixa etária do veículo (23/09, a pedido do Daniel) — mesmos buckets fixos
+// de faixaAnoVeiculo() no Code.gs, calculados aqui em cima do campo `ano` que
+// já vem em cada item de `detalhe` (nenhuma mudança de contrato precisou ser
+// feita no getStats() pra isso, só pro estoque — ver ESTOQUE_POR_FAIXA_ANO).
+const ORDEM_FAIXA_ANO = ["2020+", "2015-2019", "2010-2014", "Antes de 2010", "-"];
+const ROTULO_FAIXA_ANO = { "2020+": "2020+", "2015-2019": "2015 a 2019", "2010-2014": "2010 a 2014", "Antes de 2010": "Antes de 2010", "-": "Sem ano" };
+function faixaAnoVeiculoCliente(ano) {
+  const n = parseInt(ano, 10);
+  if (!n || isNaN(n) || n < 1900) return "-";
+  if (n >= 2020) return "2020+";
+  if (n >= 2015) return "2015-2019";
+  if (n >= 2010) return "2010-2014";
+  return "Antes de 2010";
+}
 let charts = {};
 let metricaMapaAtual = "match";
 let tipoGraficoDia = "bar"; // alternado pelo botão Linha/Barra no card "Leads por dia" — Daniel pediu Barra como padrão
@@ -565,6 +614,20 @@ function topN(obj, n) {
   return Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n);
 }
 
+// 24/09, a pedido do Daniel: o ranking "Leads por loja" (chart + a manchete
+// "X lidera com Y leads") contava TODO lead que tivesse aquela loja em
+// Nome_Revenda, não importa o Status -- inclusive leads que nunca chegaram a
+// ser enviados de verdade (Erro_RPA, Pendente_RPA, Codigo_Sem_Match). Isso
+// inflava a contagem de uma loja com leads que ela nunca recebeu de fato.
+// Regra pedida: só conta depois que o lead foi REALMENTE enviado (Status =
+// Enviado ou Enviado_Rematch) -- e como Nome_Revenda sempre reflete o match
+// MAIS RECENTE (um rematch bem-sucedido já atualiza esse campo pra revenda
+// nova), a loja creditada é sempre a que de fato recebeu aquele lead, mesmo
+// que ele tenha passado por Erro_RPA e rematch antes de ser enviado.
+function isEnviado(r) {
+  return r.status === "Enviado" || r.status === "Enviado_Rematch";
+}
+
 function preencherOpcoes(select, valores, atual) {
   const atuais = new Set(valores);
   select.innerHTML = '<option value="">Todas</option>' +
@@ -580,6 +643,7 @@ function linhasFiltradas() {
   const credicarro = document.getElementById("filtroCredicarro").value;
   const tipoVeiculo = document.getElementById("filtroTipoVeiculo").value;
   const status = document.getElementById("filtroStatus").value;
+  const faixaAno = document.getElementById("filtroFaixaAno").value;
   const dataDe = document.getElementById("filtroDataDe").value;
   const dataAte = document.getElementById("filtroDataAte").value;
   return DETALHE.filter(function (r) {
@@ -590,6 +654,7 @@ function linhasFiltradas() {
     if (credicarro === "sim" && !r.lojaCredicarro) return false;
     if (credicarro === "nao" && r.lojaCredicarro) return false;
     if (tipoVeiculo && r.tipoVeiculo !== tipoVeiculo) return false;
+    if (faixaAno && r.faixaAno !== faixaAno) return false;
     // "Enviado" no filtro cobre Enviado + Enviado_Rematch, igual ao resto do
     // dashboard (Enviado_Rematch é só um Enviado que passou por um rematch
     // antes) — as outras opções batem 1 pra 1 com o Status cru da planilha.
@@ -616,7 +681,9 @@ function renderTudo() {
   // guarda o detalhe de que houve um rematch, então aqui basta somar junto.
   const porStatus = groupCount(linhas, r => (r.status === "Enviado_Rematch" ? "Enviado" : (r.status || "Sem status")));
   const porDia = groupCount(linhas, r => r.data);
-  const porLoja = groupCount(linhas, r => r.nomeRevenda);
+  // Só conta pra loja quem de fato foi enviado (ver isEnviado) -- não quem só
+  // passou por ela num momento intermediário antes de dar erro/rematch.
+  const porLoja = groupCount(linhas.filter(isEnviado), r => r.nomeRevenda);
   const porCidade = groupCount(linhas, r => r.cidade);
   const porEstadoTop = groupCount(linhas, r => r.estado);
   const porFaixa = groupCount(linhas, r => r.faixaValor);
@@ -748,10 +815,127 @@ function renderTudo() {
     options: { plugins:{legend:{display:false}, datalabels:{...rotuloClaro, align:"top", anchor:"end"}}, scales:{ y:{beginAtZero:true, grid:{color:"rgba(255,255,255,.06)"}}, x:{grid:{display:false}} } }
   });
 
+  // "Por que não chegamos a 100% de leads enviados?" (23/09, a pedido do
+  // Daniel: "preciso gerar insumos do porque eu não fiz 100% de leads
+  // enviados") — quebra os NÃO enviados (dentro do filtro atual) pelos 4
+  // motivos possíveis (o mesmo Status cru da planilha, sem agrupar como no
+  // donut "Status do processamento"), com uma narrativa curta explicando os
+  // números. Respeita os filtros da Visão geral (ajuda o Daniel a investigar
+  // um recorte específico, ex.: só uma loja ou um período).
+  const naoEnviados = total - enviados;
+  const motivoNaoEnvio = {
+    "Aguardando RPA": porStatus["Pendente_RPA"] || 0,
+    "Erro no envio (Erro_RPA)": porStatus["Erro_RPA"] || 0,
+    "Código sem match no estoque": porStatus["Codigo_Sem_Match"] || 0,
+    "Sem código na mensagem": porStatus["Sem_Codigo"] || 0,
+  };
+  const narrativaNaoEnviados = document.getElementById("narrativaNaoEnviados");
+  if (narrativaNaoEnviados) {
+    const pctEnviadoTotal = total ? Math.round((enviados / total) * 100) : 0;
+    if (!total) {
+      narrativaNaoEnviados.innerHTML = "Sem dados ainda na aba Entrada (dentro do filtro atual).";
+    } else {
+      narrativaNaoEnviados.innerHTML =
+        `Dos <b>${total}</b> leads (dentro do filtro atual), <b>${enviados}</b> (${pctEnviadoTotal}%) já foram enviados pro RPA. Os <b>${naoEnviados}</b> restantes se dividem assim: ` +
+        `<b>${motivoNaoEnvio["Aguardando RPA"]}</b> ainda aguardam a próxima rodada do robô (Pendente_RPA); ` +
+        `<b>${motivoNaoEnvio["Erro no envio (Erro_RPA)"]}</b> tiveram erro no envio ou o anúncio ficou indisponível (Erro_RPA — parte é recuperável pelo Rematch em Massa, na aba Gerencial Lead); ` +
+        `<b>${motivoNaoEnvio["Código sem match no estoque"]}</b> vieram com código de anúncio mas não bateram com nada no estoque atual (Codigo_Sem_Match — também elegível pro Rematch); e ` +
+        `<b>${motivoNaoEnvio["Sem código na mensagem"]}</b> não trouxeram nenhum código de anúncio na mensagem original (Sem_Codigo — sem candidato inicial pra tentar, precisa de atendimento manual).`;
+    }
+  }
+  destruirChart("motivoNaoEnvio");
+  const chartMotivoNaoEnvioEl = document.getElementById("chartMotivoNaoEnvio");
+  if (chartMotivoNaoEnvioEl) {
+    const motivosLabels = Object.keys(motivoNaoEnvio);
+    charts.motivoNaoEnvio = new Chart(chartMotivoNaoEnvioEl, {
+      type: "bar",
+      data: {
+        labels: motivosLabels,
+        datasets: [{ label: "Leads", data: motivosLabels.map(m => motivoNaoEnvio[m]), backgroundColor: ["#2f8fd6", "#e5484d", cor(3), cor(5)] }],
+      },
+      options: {
+        indexAxis: "y",
+        layout: { padding: { right: 6 } },
+        plugins: { legend: { display: false }, datalabels: { ...rotuloClaro, align: "start", anchor: "end" } },
+        scales: { x: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: "rgba(255,255,255,.06)" } }, y: { grid: { display: false } } },
+      },
+    });
+  }
+
   renderMapa();
   renderMapaHome();
   renderResumoFunil();
   renderSite();
+  renderFaixaEtaria();
+}
+
+// ---------- Faixa etária do veículo (23/09) ----------
+// Não respeita os filtros da Visão geral de propósito (usa DETALHE inteiro) —
+// mesmo padrão de "Resumo do funil"/"Rematches automáticos"/"Leads Aprovados
+// - UBR": é uma visão de monitoramento de risco, não algo que faz sentido
+// fatiar pelos filtros do dia a dia.
+function renderFaixaEtaria() {
+  const tabela = document.getElementById("tabelaFaixaAno");
+  const chartLeadsEl = document.getElementById("chartFaixaAnoLeads");
+  const chartRiscoEl = document.getElementById("chartFaixaAnoRisco");
+  if (!tabela && !chartLeadsEl && !chartRiscoEl) return; // página ainda não existe nesta versão do HTML
+
+  const estoquePorFaixa = ESTOQUE_POR_FAIXA_ANO || {};
+  const porFaixaLeads = groupCount(DETALHE, r => r.faixaAno);
+  const porFaixaEnviados = groupCount(DETALHE.filter(isEnviado), r => r.faixaAno);
+  const faixasComDado = ORDEM_FAIXA_ANO.filter(f => porFaixaLeads[f] || estoquePorFaixa[f]);
+  const rotulos = faixasComDado.map(f => ROTULO_FAIXA_ANO[f]);
+
+  destruirChart("faixaAnoLeads");
+  if (chartLeadsEl) {
+    charts.faixaAnoLeads = new Chart(chartLeadsEl, {
+      type: "bar",
+      data: { labels: rotulos, datasets: [{ label: "Leads", data: faixasComDado.map(f => porFaixaLeads[f] || 0), backgroundColor: cor(0) }] },
+      options: {
+        plugins: { legend: { display: false }, datalabels: { ...rotuloClaro, align: "top", anchor: "end" } },
+        scales: { y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: "rgba(255,255,255,.06)" } }, x: { grid: { display: false } } },
+      },
+    });
+  }
+
+  destruirChart("faixaAnoRisco");
+  if (chartRiscoEl) {
+    charts.faixaAnoRisco = new Chart(chartRiscoEl, {
+      type: "bar",
+      data: {
+        labels: rotulos,
+        datasets: [
+          { label: "Leads recebidos", data: faixasComDado.map(f => porFaixaLeads[f] || 0), backgroundColor: cor(1), yAxisID: "y" },
+          { label: "Estoque disponível hoje", data: faixasComDado.map(f => estoquePorFaixa[f] || 0), backgroundColor: cor(4), yAxisID: "y1" },
+        ],
+      },
+      options: {
+        plugins: { legend: { labels: { color: "#eaf3fb" } }, datalabels: { display: false } },
+        scales: {
+          y: { beginAtZero: true, ticks: { precision: 0 }, position: "left", grid: { color: "rgba(255,255,255,.06)" }, title: { display: true, text: "Leads", color: "#8ea3b8" } },
+          y1: { beginAtZero: true, ticks: { precision: 0 }, position: "right", grid: { display: false }, title: { display: true, text: "Estoque", color: "#8ea3b8" } },
+          x: { grid: { display: false } },
+        },
+      },
+    });
+  }
+
+  if (tabela) {
+    let html = '<thead><tr><th>Faixa etária</th><th class="num">Leads recebidos</th><th class="num">Enviados</th><th class="num">% enviado</th><th class="num">Estoque disponível</th><th class="num">Leads por anúncio</th></tr></thead><tbody>';
+    faixasComDado.forEach(f => {
+      const leads = porFaixaLeads[f] || 0;
+      const enviadosFaixa = porFaixaEnviados[f] || 0;
+      const pct = leads ? Math.round((enviadosFaixa / leads) * 100) : 0;
+      const estoqueFaixa = estoquePorFaixa[f] || 0;
+      const ratio = estoqueFaixa ? (leads / estoqueFaixa) : null;
+      const ratioTexto = ratio === null ? (leads ? "sem estoque" : "-") : ratio.toFixed(2);
+      const alto = (estoqueFaixa === 0 && leads > 0) || (ratio !== null && ratio > 1);
+      const estiloRisco = alto ? ' style="background:rgba(229,72,77,.14)"' : "";
+      html += `<tr${estiloRisco}><td>${ROTULO_FAIXA_ANO[f]}</td><td class="num">${leads}</td><td class="num">${enviadosFaixa}</td><td class="num">${pct}%</td><td class="num">${estoqueFaixa}</td><td class="num">${ratioTexto}</td></tr>`;
+    });
+    html += "</tbody>";
+    tabela.innerHTML = html;
+  }
 }
 
 function preencherFiltroMesDia(todosDiasOrdenados) {
@@ -1449,7 +1633,7 @@ function gerarTextoTicker() {
   const comCodigo = DETALHE.filter(r => r.temCodigo).length;
   const pctMatch = total ? Math.round((comCodigo/total)*100) : 0;
   const valorTotal = DETALHE.reduce((s,r) => s + (Number(r.valorAnuncio)||0), 0);
-  const porLoja = groupCount(DETALHE, r => r.nomeRevenda);
+  const porLoja = groupCount(DETALHE.filter(isEnviado), r => r.nomeRevenda);
   const porCidade = groupCount(DETALHE, r => r.cidade);
   const topLoja = topN(porLoja, 1)[0];
   const topCidade = topN(porCidade, 1)[0];
@@ -1476,7 +1660,7 @@ function atualizarTicker() {
 
 function baixarCsv() {
   const linhas = linhasFiltradas();
-  const colunas = ["data","status","temCodigo","marca","modelo","ano","tipoBase","versao","type","nomeRevenda","revDDD","valorAnuncio","cidade","faixaValor","lojaCredicarro","tipoVeiculo"];
+  const colunas = ["data","status","temCodigo","marca","modelo","ano","tipoBase","versao","type","nomeRevenda","revDDD","valorAnuncio","cidade","faixaValor","lojaCredicarro","tipoVeiculo","faixaAno"];
   const escapar = v => `"${String(v === undefined || v === null ? "" : v).replace(/"/g,'""')}"`;
   const linhasCsv = [colunas.join(",")].concat(
     linhas.map(r => colunas.map(c => escapar(r[c])).join(","))
@@ -1533,6 +1717,32 @@ async function executarRefreshMatch() {
   }
 }
 
+// "token inválido" no MEIO de uma rodada de Rematch em Massa (23/09, reportado
+// pelo Daniel: 5 lotes processados com sucesso, 6º lote falhou com "token
+// inválido") não é um token errado de verdade -- o mesmo token, fixo em
+// DASH_TOKEN, já tinha funcionado nas chamadas anteriores da MESMA rodada
+// (e no getStats() que carregou o dashboard). É mais provável um soluço
+// passageiro do lado do Apps Script sob uma sequência de chamadas seguidas
+// (ex.: um gatilho de 10 min concorrente, ou uma instabilidade momentânea do
+// PropertiesService) do que uma incompatibilidade real e permanente de
+// token -- essa, se existisse, teria falhado logo na primeira chamada, não
+// só depois de vários lotes de sucesso. Por isso, só nesse erro específico
+// (nunca em qualquer outro), tenta de novo o MESMO lote (mesmo offset, não
+// avança) até 3 vezes com um pequeno intervalo antes de desistir -- um token
+// realmente errado continua falhando nas 3 tentativas e o erro final
+// aparece do mesmo jeito; um soluço passageiro se resolve sozinho.
+async function chamarLoteMassaComRetry(url, maxTentativas) {
+  let ultimaResposta = null;
+  for (let tentativa = 1; tentativa <= maxTentativas; tentativa++) {
+    const resp = await fetch(url, { method: "POST" });
+    const data = await resp.json();
+    if (data.sucesso || data.erro !== "token inválido") return data;
+    ultimaResposta = data;
+    if (tentativa < maxTentativas) await new Promise((r) => setTimeout(r, 1500 * tentativa));
+  }
+  return ultimaResposta;
+}
+
 async function executarRefreshMatchEmMassa() {
   const feedback = document.getElementById("feedbackRefresh");
   // Plataforma (UBR/MOTO/Ambos) e Range de ano (±1 a ±3) — 15/09, a pedido do
@@ -1565,8 +1775,7 @@ async function executarRefreshMatchEmMassa() {
       lotes++;
       const url = `${WEBAPP_URL}?action=refreshMatchEmMassa&token=${encodeURIComponent(DASH_TOKEN)}`
         + `&plataforma=${encodeURIComponent(plataforma)}&rangeAno=${encodeURIComponent(rangeAno)}&offset=${encodeURIComponent(offset)}`;
-      const resp = await fetch(url, { method: "POST" });
-      const data = await resp.json();
+      const data = await chamarLoteMassaComRetry(url, 3);
 
       if (!data.sucesso) {
         feedback.innerHTML = `❌ ${data.erro}` + (lotes > 1 ? ` (depois de ${lotes - 1} lote(s) processado(s) com sucesso)` : "");
@@ -1658,8 +1867,7 @@ async function executarRefreshMatchAtivoEmMassa() {
     while (true) {
       lotes++;
       const url = `${WEBAPP_URL}?action=refreshMatchAtivoEmMassa&token=${encodeURIComponent(DASH_TOKEN)}&offset=${encodeURIComponent(offset)}`;
-      const resp = await fetch(url, { method: "POST" });
-      const data = await resp.json();
+      const data = await chamarLoteMassaComRetry(url, 3);
 
       if (!data.sucesso) {
         feedback.innerHTML = `❌ ${data.erro}` + (lotes > 1 ? ` (depois de ${lotes - 1} lote(s) processado(s) com sucesso)` : "");
@@ -1707,9 +1915,11 @@ async function carregar() {
     DETALHE = (stats.detalhe || []).map(r => Object.assign({}, r, {
       faixaValor: faixaDeValorCliente(r.valorAnuncio),
       estado: extrairUF(r.cidade),
+      faixaAno: faixaAnoVeiculoCliente(r.ano),
     }));
     REMATCH_POR_DIA = stats.porRematchDia || {};
     SITE_STATS = stats.site || {};
+    ESTOQUE_POR_FAIXA_ANO = stats.estoquePorFaixaAno || {};
 
     preencherOpcoes(document.getElementById("filtroLoja"), DETALHE.map(r=>r.nomeRevenda).filter(Boolean));
     preencherOpcoes(document.getElementById("filtroCidade"), DETALHE.map(r=>r.cidade).filter(Boolean));
@@ -1740,6 +1950,7 @@ document.getElementById("filtroEstado").addEventListener("change", renderTudo);
 document.getElementById("filtroCredicarro").addEventListener("change", renderTudo);
 document.getElementById("filtroTipoVeiculo").addEventListener("change", renderTudo);
 document.getElementById("filtroStatus").addEventListener("change", renderTudo);
+document.getElementById("filtroFaixaAno").addEventListener("change", renderTudo);
 document.getElementById("filtroDataDe").addEventListener("change", renderTudo);
 document.getElementById("filtroDataAte").addEventListener("change", renderTudo);
 document.getElementById("btnCsv").addEventListener("click", baixarCsv);
@@ -1751,6 +1962,7 @@ document.getElementById("btnLimpar").addEventListener("click", function () {
   document.getElementById("filtroCredicarro").value = "";
   document.getElementById("filtroTipoVeiculo").value = "";
   document.getElementById("filtroStatus").value = "";
+  document.getElementById("filtroFaixaAno").value = "";
   document.getElementById("filtroDataDe").value = "";
   document.getElementById("filtroDataAte").value = "";
   renderTudo();
