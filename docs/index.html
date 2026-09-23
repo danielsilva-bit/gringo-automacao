@@ -600,6 +600,17 @@ function formatarMoeda(v) {
   return (Number(v) || 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 });
 }
 
+// Versão compacta ("R$ 1,2mi"/"R$ 850mil") só pros rótulos DENTRO dos
+// estados do mapa (24/09) -- o valor completo (formatarMoeda) não cabe no
+// espaço apertado de um estado pequeno; a tabela de ranking ao lado continua
+// mostrando o valor cheio.
+function formatarMoedaCompacta(v) {
+  const n = Number(v) || 0;
+  if (n >= 1000000) return "R$ " + (n / 1000000).toFixed(1).replace(".", ",") + "mi";
+  if (n >= 1000) return "R$ " + Math.round(n / 1000) + "mil";
+  return "R$ " + Math.round(n);
+}
+
 function groupCount(rows, keyFn) {
   const out = {};
   rows.forEach(function (r) {
@@ -892,7 +903,28 @@ function renderFaixaEtaria() {
       type: "bar",
       data: { labels: rotulos, datasets: [{ label: "Leads", data: faixasComDado.map(f => porFaixaLeads[f] || 0), backgroundColor: cor(0) }] },
       options: {
-        plugins: { legend: { display: false }, datalabels: { ...rotuloClaro, align: "top", anchor: "end" } },
+        plugins: {
+          legend: { display: false },
+          // Dois rótulos por barra (24/09, a pedido do Daniel): o valor em
+          // cima da barra (como já era) e o % que aquela faixa representa do
+          // total, dentro da própria barra.
+          datalabels: {
+            labels: {
+              valor: { ...rotuloClaro, align: "top", anchor: "end" },
+              pct: {
+                color: "#071726",
+                font: { size: 11, weight: "700" },
+                align: "center",
+                anchor: "center",
+                formatter: function (value, context) {
+                  const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                  const pct = total ? Math.round((value / total) * 100) : 0;
+                  return pct + "%";
+                },
+              },
+            },
+          },
+        },
         scales: { y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: "rgba(255,255,255,.06)" } }, x: { grid: { display: false } } },
       },
     });
@@ -905,12 +937,33 @@ function renderFaixaEtaria() {
       data: {
         labels: rotulos,
         datasets: [
-          { label: "Leads recebidos", data: faixasComDado.map(f => porFaixaLeads[f] || 0), backgroundColor: cor(1), yAxisID: "y" },
-          { label: "Estoque disponível hoje", data: faixasComDado.map(f => estoquePorFaixa[f] || 0), backgroundColor: cor(4), yAxisID: "y1" },
+          // Verde pra "Leads recebidos" (antes as duas cores eram tons de
+          // azul quase iguais, difícil de diferenciar — pedido do Daniel) x
+          // azul pra "Estoque disponível hoje", pra ficar visualmente clara
+          // a diferença entre as duas séries mesmo em eixos diferentes.
+          { label: "Leads recebidos", data: faixasComDado.map(f => porFaixaLeads[f] || 0), backgroundColor: "#00c85f", yAxisID: "y" },
+          { label: "Estoque disponível hoje", data: faixasComDado.map(f => estoquePorFaixa[f] || 0), backgroundColor: "#0080b0", yAxisID: "y1" },
         ],
       },
       options: {
-        plugins: { legend: { labels: { color: "#eaf3fb" } }, datalabels: { display: false } },
+        plugins: {
+          legend: { labels: { color: "#eaf3fb" } },
+          // Rótulo com valor + % (do total daquela própria série), igual ao
+          // padrão já usado nos donuts (rotuloFatia) — cada dataset calcula
+          // seu próprio total, então "% de leads" e "% de estoque" nunca se
+          // misturam mesmo estando no mesmo gráfico.
+          datalabels: {
+            ...rotuloClaro,
+            align: "top",
+            anchor: "end",
+            formatter: function (value, context) {
+              if (!value) return "0";
+              const total = context.dataset.data.reduce((a, b) => a + b, 0);
+              const pct = total ? Math.round((value / total) * 100) : 0;
+              return value + " (" + pct + "%)";
+            },
+          },
+        },
         scales: {
           y: { beginAtZero: true, ticks: { precision: 0 }, position: "left", grid: { color: "rgba(255,255,255,.06)" }, title: { display: true, text: "Leads", color: "#8ea3b8" } },
           y1: { beginAtZero: true, ticks: { precision: 0 }, position: "right", grid: { display: false }, title: { display: true, text: "Estoque", color: "#8ea3b8" } },
@@ -1323,13 +1376,89 @@ function renderMapa() {
 
   const maximo = Math.max(1, ...Object.keys(porEstado).map(valorMetrica));
 
+  // Rótulo de dados DENTRO de cada estado (24/09, a pedido do Daniel: "adiciona
+  // os rótulos de dados dentro dos estados, sem mexer no tamanho" do mapa) --
+  // reaproveita exatamente o mesmo algoritmo já usado no mini-mapa da Visão
+  // geral (11/09, ver renderMapaHome()/melhorPontoInterno() acima): acha um
+  // ponto de verdade dentro do preenchimento do estado (não só o centro da
+  // bounding box, que pode cair fora em estados de contorno irregular), e só
+  // desenha o rótulo se ele não colidir com um já colocado -- o estado que não
+  // coube continua colorido e com o valor disponível no hover/tabela, exatamente
+  // como já acontecia no mini-mapa. O tamanho do próprio mapa não muda em nada.
+  function textoRotuloMapa(v) {
+    if (metricaMapaAtual === "match") return Math.round(v) + "%";
+    return formatarMoedaCompacta(v);
+  }
+
+  const svgMapa = document.getElementById("mapaBrasil");
+  let rotulosMapa = svgMapa ? svgMapa.querySelector("g#rotulosEstadoMapa") : null;
+  if (svgMapa && !rotulosMapa) {
+    rotulosMapa = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    rotulosMapa.setAttribute("id", "rotulosEstadoMapa");
+    svgMapa.appendChild(rotulosMapa);
+  }
+  if (rotulosMapa) rotulosMapa.innerHTML = "";
+
+  const vbMapa = svgMapa ? (svgMapa.getAttribute("viewBox") || "0 0 613 639").split(/\s+/).map(Number) : [0, 0, 613, 639];
+  const [vbxMapa, vbyMapa, vbwMapa, vbhMapa] = vbMapa.length === 4 ? vbMapa : [0, 0, 613, 639];
+  const candidatosMapa = [];
+
   document.querySelectorAll("#mapaBrasil path").forEach(path => {
     const uf = (path.id || "").toUpperCase();
     const v = valorMetrica(uf);
     const t = maximo ? v / maximo : 0;
     path.setAttribute("fill", porEstado[uf] ? misturarCor(corBase, corAlta, Math.max(t, 0.12)) : "#132538");
     path.style.opacity = porEstado[uf] ? "1" : ".45";
+
+    if (svgMapa && porEstado[uf] && v > 0) {
+      const bb = path.getBBox();
+      if (!bb.width || !bb.height) return;
+      const p = melhorPontoInterno(svgMapa, path, bb);
+      const margem = 10;
+      const x = Math.max(vbxMapa + margem, Math.min(vbxMapa + vbwMapa - margem, p.x));
+      const y = Math.max(vbyMapa + margem, Math.min(vbyMapa + vbhMapa - margem, p.y));
+      const tamanho = Math.max(6, Math.min(9.5, Math.min(bb.width, bb.height) * 0.3));
+      candidatosMapa.push({ v, x, y, tamanho, texto: textoRotuloMapa(v) });
+    }
   });
+
+  if (rotulosMapa) {
+    candidatosMapa.sort((a, b) => b.v - a.v);
+    const colocadosMapa = [];
+    const svgNS = "http://www.w3.org/2000/svg";
+    candidatosMapa.forEach(c => {
+      const texto = document.createElementNS(svgNS, "text");
+      texto.setAttribute("x", c.x);
+      texto.setAttribute("y", c.y);
+      texto.setAttribute("text-anchor", "middle");
+      texto.setAttribute("dominant-baseline", "middle");
+      texto.setAttribute("class", "rotulo-uf-home");
+      texto.setAttribute("font-size", c.tamanho.toFixed(1));
+      texto.textContent = c.texto;
+      rotulosMapa.appendChild(texto); // precisa estar no DOM pra medir a largura real
+
+      let largura;
+      try { largura = texto.getComputedTextLength(); }
+      catch (e) { largura = c.texto.length * c.tamanho * 0.65; } // sem suporte (ex.: testes) -> estimativa
+      if (!largura) largura = c.texto.length * c.tamanho * 0.65;
+
+      const altura = c.tamanho * 1.2;
+      const pad = 2;
+      const rect = { x0: c.x - largura / 2 - pad, y0: c.y - altura / 2 - pad, x1: c.x + largura / 2 + pad, y1: c.y + altura / 2 + pad };
+      const colide = colocadosMapa.some(r => !(rect.x1 < r.x0 || rect.x0 > r.x1 || rect.y1 < r.y0 || rect.y0 > r.y1));
+      if (colide) { texto.remove(); return; }
+      colocadosMapa.push(rect);
+
+      const fundo = document.createElementNS(svgNS, "rect");
+      fundo.setAttribute("x", rect.x0);
+      fundo.setAttribute("y", rect.y0);
+      fundo.setAttribute("width", rect.x1 - rect.x0);
+      fundo.setAttribute("height", rect.y1 - rect.y0);
+      fundo.setAttribute("rx", 3);
+      fundo.setAttribute("class", "rotulo-uf-home-fundo");
+      rotulosMapa.insertBefore(fundo, texto);
+    });
+  }
 
   document.getElementById("legendaBarra").style.background = `linear-gradient(90deg, ${corBase}, ${corAlta})`;
   const rotulos = {
@@ -1988,6 +2117,13 @@ document.querySelectorAll(".aba").forEach(aba => {
     aba.classList.add("ativa");
     document.querySelectorAll(".pagina").forEach(p => p.classList.remove("ativa"));
     document.getElementById("pagina-" + aba.dataset.pagina).classList.add("ativa");
+    // Rótulos dentro dos estados (24/09) dependem de path.getBBox()/isPointInFill(),
+    // que só devolvem coordenadas de verdade com a página VISÍVEL (com a aba
+    // "Mapa por estado" ainda não aberta, o <div class="pagina"> está
+    // display:none e todo path some com bbox zerada) -- por isso a aba
+    // "mapa" precisa recalcular os rótulos assim que fica visível, e não só
+    // quando os dados/filtros mudam (que já chama renderMapa() em renderTudo()).
+    if (aba.dataset.pagina === "mapa") renderMapa();
   });
 });
 
