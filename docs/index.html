@@ -1551,12 +1551,20 @@ async function executarRefreshMatchEmMassa() {
   let totalSucesso = 0, totalSemMatch = 0;
   const todosDetalhes = [];
   let lotes = 0;
+  // offset: de onde a próxima chamada deve continuar na aba Entrada. Sem
+  // isso, cada chamada recomeçava do topo da planilha e, se as primeiras
+  // linhas travadas não tivessem candidato (nunca mudam de status), o lote
+  // inteiro era gasto reprocessando sempre as mesmas linhas -- o loop nunca
+  // convergia (esse é o "fica carregando 240... 500 pra sempre" que o Daniel
+  // reportou em 23/09) e leads mais pra baixo na planilha (ex.: mais antigos
+  // por data, tipo 16/09) nunca chegavam a ser tentados.
+  let offset = 0;
 
   try {
     while (true) {
       lotes++;
       const url = `${WEBAPP_URL}?action=refreshMatchEmMassa&token=${encodeURIComponent(DASH_TOKEN)}`
-        + `&plataforma=${encodeURIComponent(plataforma)}&rangeAno=${encodeURIComponent(rangeAno)}`;
+        + `&plataforma=${encodeURIComponent(plataforma)}&rangeAno=${encodeURIComponent(rangeAno)}&offset=${encodeURIComponent(offset)}`;
       const resp = await fetch(url, { method: "POST" });
       const data = await resp.json();
 
@@ -1573,6 +1581,7 @@ async function executarRefreshMatchEmMassa() {
 
       const restantes = data.restantes || 0;
       if (restantes > 0) {
+        offset = data.proximoOffset || 0;
         feedback.innerHTML = `⏳ Processados ${totalSucesso + totalSemMatch} até agora (${rotuloPlataforma}, ano ±${rangeAno}), ainda restam ~${restantes}... continuando`;
         continue; // próximo lote
       }
@@ -1636,15 +1645,19 @@ async function executarRefreshMatchAtivoEmMassa() {
   feedback.innerHTML = "⏳ Reprocessando CPFs presos em aprovado_sem_match...";
   feedback.className = "feedback-refresh processando";
 
-  // Mesmo padrão de lotes/continuação do Rematch em Massa do Receptivo.
+  // Mesmo padrão de lotes/continuação do Rematch em Massa do Receptivo,
+  // incluindo o offset que garante que cada chamada avança na planilha em
+  // vez de sempre recomeçar do topo (ver comentário em
+  // executarRefreshMatchEmMassa acima).
   let totalSucesso = 0, totalSemMatch = 0;
   const todosDetalhes = [];
   let lotes = 0;
+  let offset = 0;
 
   try {
     while (true) {
       lotes++;
-      const url = `${WEBAPP_URL}?action=refreshMatchAtivoEmMassa&token=${encodeURIComponent(DASH_TOKEN)}`;
+      const url = `${WEBAPP_URL}?action=refreshMatchAtivoEmMassa&token=${encodeURIComponent(DASH_TOKEN)}&offset=${encodeURIComponent(offset)}`;
       const resp = await fetch(url, { method: "POST" });
       const data = await resp.json();
 
@@ -1661,6 +1674,7 @@ async function executarRefreshMatchAtivoEmMassa() {
 
       const restantes = data.restantes || 0;
       if (restantes > 0) {
+        offset = data.proximoOffset || 0;
         feedback.innerHTML = `⏳ Processados ${totalSucesso + totalSemMatch} até agora, ainda restam ~${restantes}... continuando`;
         continue; // próximo lote
       }
